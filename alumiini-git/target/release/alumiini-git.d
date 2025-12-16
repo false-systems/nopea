@@ -1,1 +1,0 @@
-/Users/yair/projects/alumiini/alumiini-git/target/release/alumiini-git: /Users/yair/projects/alumiini/alumiini-git/src/git.rs /Users/yair/projects/alumiini/alumiini-git/src/main.rs /Users/yair/projects/alumiini/alumiini-git/src/protocol.rs
