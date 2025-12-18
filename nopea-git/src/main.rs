@@ -90,5 +90,10 @@ fn handle_request(request: Request) -> Response {
             Ok(info) => Response::OkCommitInfo(info),
             Err(e) => Response::Err(e.to_string()),
         },
+
+        Request::Checkout { path, sha } => match git::checkout(&path, &sha) {
+            Ok(sha) => Response::Ok(sha),
+            Err(e) => Response::Err(e.to_string()),
+        },
     }
 }

@@ -166,6 +166,57 @@ defmodule Nopea.GitTest do
     end
   end
 
+  describe "checkout/2 integration" do
+    @tag :integration
+    test "rolls back to a previous commit" do
+      unless rust_binary_exists?() do
+        IO.puts("Skipping: Rust binary not built")
+        :ok
+      else
+        path = "/tmp/nopea-test-checkout-#{:rand.uniform(100_000)}"
+
+        try do
+          # Initialize git repo
+          File.mkdir_p!(path)
+          System.cmd("git", ["init"], cd: path)
+          System.cmd("git", ["config", "user.name", "Test User"], cd: path)
+          System.cmd("git", ["config", "user.email", "test@example.com"], cd: path)
+
+          # First commit
+          File.write!(Path.join(path, "file.txt"), "version 1")
+          System.cmd("git", ["add", "."], cd: path)
+          System.cmd("git", ["commit", "-m", "First commit"], cd: path)
+
+          # Get first commit SHA
+          {:ok, first_info} = Git.head(path)
+          first_sha = first_info.sha
+
+          # Second commit
+          File.write!(Path.join(path, "file.txt"), "version 2")
+          System.cmd("git", ["add", "."], cd: path)
+          System.cmd("git", ["commit", "-m", "Second commit"], cd: path)
+
+          # Verify we're at second commit
+          {:ok, current} = Git.head(path)
+          assert current.message =~ "Second commit"
+
+          # Checkout first commit (rollback)
+          assert {:ok, ^first_sha} = Git.checkout(path, first_sha)
+
+          # Verify we're back at first commit
+          {:ok, after_checkout} = Git.head(path)
+          assert after_checkout.sha == first_sha
+          assert after_checkout.message =~ "First commit"
+
+          # Verify file content is rolled back
+          assert File.read!(Path.join(path, "file.txt")) == "version 1"
+        after
+          File.rm_rf!(path)
+        end
+      end
+    end
+  end
+
   defp rust_binary_exists? do
     dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
     File.exists?(dev_path)

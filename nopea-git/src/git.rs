@@ -52,6 +52,18 @@ pub fn head(path: &str) -> Result<CommitInfo, GitError> {
     })
 }
 
+/// Checkout a specific commit by SHA (hard reset)
+pub fn checkout(path: &str, sha: &str) -> Result<String, GitError> {
+    let repo = Repository::open(path)?;
+    let oid = git2::Oid::from_str(sha)?;
+    let commit = repo.find_commit(oid)?;
+
+    // Hard reset to the commit
+    repo.reset(commit.as_object(), ResetType::Hard, None)?;
+
+    Ok(sha.to_string())
+}
+
 /// Sync a repository: clone if not exists, fetch+reset if exists.
 /// Returns the HEAD commit SHA.
 pub fn sync(url: &str, branch: &str, path: &str, depth: u32) -> Result<String, GitError> {
@@ -281,5 +293,72 @@ mod tests {
         assert_eq!(info.message, "Initial commit\n\nThis is the body.");
         assert!(!info.sha.is_empty());
         assert!(info.timestamp > 0);
+    }
+
+    #[test]
+    fn test_checkout_resets_to_commit() {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path();
+
+        // Initialize repo
+        let repo = Repository::init(dir).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        let sig = repo.signature().unwrap();
+
+        // First commit
+        fs::write(dir.join("file.txt"), "version 1").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        let first_commit_oid = repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "First commit",
+            &tree,
+            &[],
+        ).unwrap();
+        let first_sha = first_commit_oid.to_string();
+
+        // Second commit
+        fs::write(dir.join("file.txt"), "version 2").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let first_commit = repo.find_commit(first_commit_oid).unwrap();
+
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Second commit",
+            &tree,
+            &[&first_commit],
+        ).unwrap();
+
+        // Verify we're at second commit
+        let current = head(dir.to_str().unwrap()).unwrap();
+        assert!(current.message.contains("Second commit"));
+
+        // Checkout first commit
+        let result = checkout(dir.to_str().unwrap(), &first_sha);
+        assert!(result.is_ok());
+
+        // Verify we're back at first commit
+        let after_checkout = head(dir.to_str().unwrap()).unwrap();
+        assert_eq!(after_checkout.sha, first_sha);
+        assert!(after_checkout.message.contains("First commit"));
+
+        // Verify file content is rolled back
+        let content = fs::read_to_string(dir.join("file.txt")).unwrap();
+        assert_eq!(content, "version 1");
     }
 }

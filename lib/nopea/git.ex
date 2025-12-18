@@ -68,6 +68,16 @@ defmodule Nopea.Git do
     GenServer.call(__MODULE__, {:head, path}, @timeout)
   end
 
+  @doc """
+  Checkout (hard reset) to a specific commit SHA.
+  Returns {:ok, sha} or {:error, reason}.
+  Used for rollback to a known good commit.
+  """
+  @spec checkout(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def checkout(path, sha) do
+    GenServer.call(__MODULE__, {:checkout, path, sha}, @timeout)
+  end
+
   # Server Callbacks
 
   @impl true
@@ -120,6 +130,16 @@ defmodule Nopea.Git do
   @impl true
   def handle_call({:head, path}, from, state) do
     request = %{"op" => "head", "path" => path}
+
+    case send_request(state.port, request) do
+      :ok -> {:noreply, %{state | caller: from}}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:checkout, path, sha}, from, state) do
+    request = %{"op" => "checkout", "path" => path, "sha" => sha}
 
     case send_request(state.port, request) do
       :ok -> {:noreply, %{state | caller: from}}

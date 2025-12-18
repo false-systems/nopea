@@ -29,6 +29,9 @@ pub enum Request {
 
     /// Get HEAD commit info
     Head { path: String },
+
+    /// Checkout (hard reset) to a specific commit SHA
+    Checkout { path: String, sha: String },
 }
 
 fn default_depth() -> u32 {
