@@ -29,10 +29,15 @@ pub enum GitError {
 /// Commit information returned by head()
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CommitInfo {
+    /// Full SHA-1 hash of the commit (40 hex characters)
     pub sha: String,
+    /// Name of the commit author
     pub author: String,
+    /// Email address of the commit author
     pub email: String,
+    /// Full commit message (subject + body)
     pub message: String,
+    /// Commit time as Unix timestamp in seconds (UTC)
     pub timestamp: i64,
 }
 
@@ -83,13 +88,19 @@ pub fn ls_remote(url: &str, branch: &str) -> Result<String, GitError> {
 
     // Find the branch ref
     let branch_ref = format!("refs/heads/{}", branch);
+    let mut found_sha: Option<String> = None;
+
     for r in refs {
         if r.name() == branch_ref {
-            return Ok(r.oid().to_string());
+            found_sha = Some(r.oid().to_string());
+            break;
         }
     }
 
-    Err(GitError::BranchNotFound(branch.to_string()))
+    // Explicitly disconnect to ensure proper cleanup
+    remote.disconnect()?;
+
+    found_sha.ok_or_else(|| GitError::BranchNotFound(branch.to_string()))
 }
 
 /// Sync a repository: clone if not exists, fetch+reset if exists.
