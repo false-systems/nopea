@@ -164,6 +164,46 @@ defmodule Nopea.GitTest do
         end
       end
     end
+
+    @tag :integration
+    test "returns error for non-existent path" do
+      unless rust_binary_exists?() do
+        IO.puts("Skipping: Rust binary not built")
+        :ok
+      else
+        path = "/tmp/nopea-nonexistent-#{:rand.uniform(100_000)}"
+
+        result = Git.head(path)
+
+        assert {:error, reason} = result
+        assert is_binary(reason)
+        assert reason =~ "failed to open" or reason =~ "not found" or reason =~ "No such file"
+      end
+    end
+
+    @tag :integration
+    test "returns error for directory that is not a git repository" do
+      unless rust_binary_exists?() do
+        IO.puts("Skipping: Rust binary not built")
+        :ok
+      else
+        path = "/tmp/nopea-not-git-#{:rand.uniform(100_000)}"
+
+        try do
+          # Create a regular directory (not a git repo)
+          File.mkdir_p!(path)
+          File.write!(Path.join(path, "some-file.txt"), "not a repo")
+
+          result = Git.head(path)
+
+          assert {:error, reason} = result
+          assert is_binary(reason)
+          assert reason =~ "repository" or reason =~ "git"
+        after
+          File.rm_rf!(path)
+        end
+      end
+    end
   end
 
   describe "checkout/2 integration" do

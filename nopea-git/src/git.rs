@@ -3,9 +3,7 @@
 use std::path::Path;
 
 use base64::Engine;
-use git2::{
-    build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository, ResetType,
-};
+use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository, ResetType};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -57,7 +55,11 @@ pub fn head(path: &str) -> Result<CommitInfo, GitError> {
     })
 }
 
-/// Checkout a specific commit by SHA (hard reset)
+/// Checkout a specific commit by SHA (hard reset).
+///
+/// **Warning:** This performs a destructive hard reset and will discard all
+/// uncommitted changes in the working directory. The repository will be left
+/// in a detached HEAD state pointing to the specified commit.
 pub fn checkout(path: &str, sha: &str) -> Result<String, GitError> {
     let repo = Repository::open(path)?;
     let oid = git2::Oid::from_str(sha)?;
@@ -71,63 +73,34 @@ pub fn checkout(path: &str, sha: &str) -> Result<String, GitError> {
 
 /// Query remote for the latest commit SHA of a branch (without fetching)
 pub fn ls_remote(url: &str, branch: &str) -> Result<String, GitError> {
-    let mut remote = git2::Remote::create_detached(url)?;
+    let branch_ref = format!("refs/heads/{}", branch);
 
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(|_url, username_from_url, _allowed_types| {
-        if let Some(username) = username_from_url {
-            // Try SSH key authentication via SSH agent for the provided username.
-            // If this fails, log a clear message so users can diagnose auth issues.
-            match Cred::ssh_key_from_agent(username) {
-                Ok(cred) => Ok(cred),
-                Err(err) => {
-                    eprintln!(
-                        "git ls_remote: SSH key authentication via agent failed for user '{}': {}",
-                        username,
-                        err
-                    );
-                    Err(err)
-                }
+    // Use a scope to ensure remote is dropped (and disconnected) before returning.
+    // Remote's Drop impl handles cleanup, so we rely on RAII rather than explicit disconnect.
+    let found_sha = {
+        let mut remote = git2::Remote::create_detached(url)?;
+
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(|_url, username_from_url, _allowed_types| {
+            if let Some(username) = username_from_url {
+                Cred::ssh_key_from_agent(username)
+            } else {
+                Cred::default()
             }
-        } else {
-            // No username provided by URL/libgit2; fall back to default credentials.
-            // This may still fail, but at least log that we're not using SSH agent keys.
-            eprintln!(
-                "git ls_remote: no username provided for remote URL; using default git credentials"
-            );
-            Cred::default()
-        }
-    });
+        });
 
-    // Connect and list refs
-    remote.connect_auth(git2::Direction::Fetch, Some(callbacks), None)?;
-
-    // Perform operations with the connected remote, ensuring we always disconnect afterwards.
-    let result: Result<String, GitError> = (|| {
+        // Connect and list refs
+        remote.connect_auth(git2::Direction::Fetch, Some(callbacks), None)?;
         let refs = remote.list()?;
 
         // Find the branch ref
-        let branch_ref = format!("refs/heads/{}", branch);
-        let mut found_sha: Option<String> = None;
+        refs.iter()
+            .find(|r| r.name() == branch_ref)
+            .map(|r| r.oid().to_string())
+        // remote is dropped here, triggering automatic disconnect via Drop
+    };
 
-        for r in refs {
-            if r.name() == branch_ref {
-                found_sha = Some(r.oid().to_string());
-                break;
-            }
-        }
-
-        found_sha.ok_or_else(|| GitError::BranchNotFound(branch.to_string()))
-    })();
-
-    // Explicitly disconnect to ensure proper cleanup, even if an error occurred above.
-    let disconnect_result = remote.disconnect();
-
-    match (result, disconnect_result) {
-        (Ok(sha), Ok(())) => Ok(sha),
-        (Ok(_), Err(e)) => Err(e.into()),
-        (Err(e), _) => Err(e),
-    }
+    found_sha.ok_or_else(|| GitError::BranchNotFound(branch.to_string()))
 }
 
 /// Sync a repository: clone if not exists, fetch+reset if exists.
@@ -349,7 +322,8 @@ mod tests {
             "Initial commit\n\nThis is the body.",
             &tree,
             &[],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Now test head()
         let info = head(dir.to_str().unwrap()).unwrap();
@@ -382,14 +356,9 @@ mod tests {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
 
-        let first_commit_oid = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "First commit",
-            &tree,
-            &[],
-        ).unwrap();
+        let first_commit_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "First commit", &tree, &[])
+            .unwrap();
         let first_sha = first_commit_oid.to_string();
 
         // Second commit
@@ -408,7 +377,8 @@ mod tests {
             "Second commit",
             &tree,
             &[&first_commit],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Verify we're at second commit
         let current = head(dir.to_str().unwrap()).unwrap();
@@ -431,10 +401,7 @@ mod tests {
     #[test]
     fn test_ls_remote_returns_sha() {
         // Test against a known public repo
-        let result = ls_remote(
-            "https://github.com/octocat/Hello-World.git",
-            "master",
-        );
+        let result = ls_remote("https://github.com/octocat/Hello-World.git", "master");
 
         assert!(result.is_ok());
         let sha = result.unwrap();

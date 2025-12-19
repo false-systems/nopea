@@ -44,8 +44,7 @@ fn read_request<R: Read>(reader: &mut R) -> Result<Request, io::Error> {
     reader.read_exact(&mut payload)?;
 
     // Deserialize msgpack
-    rmp_serde::from_slice(&payload)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    rmp_serde::from_slice(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 fn write_response<W: Write>(writer: &mut W, response: &Response) -> Result<(), io::Error> {

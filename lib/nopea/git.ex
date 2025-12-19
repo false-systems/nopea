@@ -70,8 +70,13 @@ defmodule Nopea.Git do
 
   @doc """
   Checkout (hard reset) to a specific commit SHA.
-  Returns {:ok, sha} or {:error, reason}.
+
+  **Warning:** This performs a destructive hard reset and will discard all
+  uncommitted changes in the working directory. Ensure there is no important
+  uncommitted work before calling this function.
+
   Used for rollback to a known good commit.
+  Returns {:ok, sha} or {:error, reason}.
   """
   @spec checkout(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def checkout(path, sha) do
@@ -253,18 +258,24 @@ defmodule Nopea.Git do
 
       {:ok,
        %{
-         "ok" =>
-           %{
-             "sha" => sha,
-             "author" => author,
-             "email" => email,
-             "message" => message,
-             "timestamp" => timestamp
-           } = info
+         "ok" => %{
+           "sha" => sha,
+           "author" => author,
+           "email" => email,
+           "message" => message,
+           "timestamp" => timestamp
+         }
        }}
       when is_binary(sha) and is_binary(author) and is_binary(email) and
              is_binary(message) and is_integer(timestamp) ->
-        {:ok, atomize_keys(info)}
+        {:ok,
+         %{
+           sha: sha,
+           author: author,
+           email: email,
+           message: message,
+           timestamp: timestamp
+         }}
 
       {:ok, %{"err" => reason}} ->
         {:error, reason}
@@ -277,26 +288,6 @@ defmodule Nopea.Git do
         Logger.error("Failed to unpack msgpack response: #{inspect(reason)}")
         {:error, {:msgpack_error, reason}}
     end
-  end
-
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_binary(k) ->
-        atom_key =
-          case k do
-            "sha" -> :sha
-            "author" -> :author
-            "email" -> :email
-            "message" -> :message
-            "timestamp" -> :timestamp
-            _ -> k
-          end
-
-        {atom_key, v}
-
-      {k, v} ->
-        {k, v}
-    end)
   end
 
   @doc """

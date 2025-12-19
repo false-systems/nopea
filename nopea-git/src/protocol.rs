@@ -1,6 +1,6 @@
 //! Protocol definitions for nopea-git
 
-use serde::{Deserialize, Serialize, ser::SerializeMap};
+use serde::{ser::SerializeMap, Deserialize, Serialize};
 
 use crate::git::CommitInfo;
 
