@@ -84,23 +84,33 @@ pub fn ls_remote(url: &str, branch: &str) -> Result<String, GitError> {
 
     // Connect and list refs
     remote.connect_auth(git2::Direction::Fetch, Some(callbacks), None)?;
-    let refs = remote.list()?;
 
-    // Find the branch ref
-    let branch_ref = format!("refs/heads/{}", branch);
-    let mut found_sha: Option<String> = None;
+    // Perform operations with the connected remote, ensuring we always disconnect afterwards.
+    let result: Result<String, GitError> = (|| {
+        let refs = remote.list()?;
 
-    for r in refs {
-        if r.name() == branch_ref {
-            found_sha = Some(r.oid().to_string());
-            break;
+        // Find the branch ref
+        let branch_ref = format!("refs/heads/{}", branch);
+        let mut found_sha: Option<String> = None;
+
+        for r in refs {
+            if r.name() == branch_ref {
+                found_sha = Some(r.oid().to_string());
+                break;
+            }
         }
+
+        found_sha.ok_or_else(|| GitError::BranchNotFound(branch.to_string()))
+    })();
+
+    // Explicitly disconnect to ensure proper cleanup, even if an error occurred above.
+    let disconnect_result = remote.disconnect();
+
+    match (result, disconnect_result) {
+        (Ok(sha), Ok(())) => Ok(sha),
+        (Ok(_), Err(e)) => Err(e.into()),
+        (Err(e), _) => Err(e),
     }
-
-    // Explicitly disconnect to ensure proper cleanup
-    remote.disconnect()?;
-
-    found_sha.ok_or_else(|| GitError::BranchNotFound(branch.to_string()))
 }
 
 /// Sync a repository: clone if not exists, fetch+reset if exists.
