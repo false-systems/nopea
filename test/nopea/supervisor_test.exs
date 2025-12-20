@@ -7,7 +7,6 @@ defmodule Nopea.SupervisorTest do
   @moduletag :integration
 
   setup do
-    # Check if Rust binary exists
     dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
 
     if File.exists?(dev_path) do
@@ -15,64 +14,84 @@ defmodule Nopea.SupervisorTest do
       start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
       start_supervised!(Nopea.Git)
       start_supervised!(Nopea.Supervisor)
-      :ok
+
+      # Cleanup any leftover workers on exit
+      on_exit(fn ->
+        try do
+          NopSupervisor.list_workers()
+          |> Enum.each(fn {name, _pid} ->
+            try do
+              NopSupervisor.stop_worker(name)
+            rescue
+              _ -> :ok
+            end
+          end)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, binary_available: true}
     else
       IO.puts("Skipping: Rust binary not built")
-      :ok
+      {:ok, binary_available: false}
     end
-  end
-
-  defp rust_binary_exists? do
-    dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
-    File.exists?(dev_path)
   end
 
   describe "start_worker/1" do
     @tag timeout: 30_000
-    test "starts a worker for a repo config" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "starts a worker for a repo config", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       config = test_config("start-test")
 
       assert {:ok, pid} = NopSupervisor.start_worker(config)
       assert Process.alive?(pid)
 
-      # Cleanup
       NopSupervisor.stop_worker(config.name)
     end
 
     @tag timeout: 30_000
-    test "returns error for duplicate repo name" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "returns error for duplicate repo name", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       config = test_config("dup-test")
 
       {:ok, _pid} = NopSupervisor.start_worker(config)
       assert {:error, {:already_started, _}} = NopSupervisor.start_worker(config)
 
-      # Cleanup
       NopSupervisor.stop_worker(config.name)
     end
   end
 
   describe "stop_worker/1" do
     @tag timeout: 30_000
-    test "stops a running worker" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "stops a running worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       config = test_config("stop-test")
 
       {:ok, pid} = NopSupervisor.start_worker(config)
       assert Process.alive?(pid)
 
+      # Monitor the process to wait for termination
+      ref = Process.monitor(pid)
+
       :ok = NopSupervisor.stop_worker(config.name)
-      Process.sleep(100)
-      refute Process.alive?(pid)
+
+      # Wait for process to actually terminate
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} ->
+          refute Process.alive?(pid)
+      after
+        5_000 ->
+          flunk("Process did not terminate within timeout")
+      end
     end
 
     @tag timeout: 30_000
-    test "returns error for unknown worker" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "returns error for unknown worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       assert {:error, :not_found} = NopSupervisor.stop_worker("unknown-repo")
     end
@@ -80,8 +99,8 @@ defmodule Nopea.SupervisorTest do
 
   describe "list_workers/0" do
     @tag timeout: 30_000
-    test "returns list of active workers" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "returns list of active workers", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       config1 = test_config("list-1")
       config2 = test_config("list-2")
@@ -93,7 +112,6 @@ defmodule Nopea.SupervisorTest do
       assert Enum.any?(workers, fn {name, _pid} -> name == config1.name end)
       assert Enum.any?(workers, fn {name, _pid} -> name == config2.name end)
 
-      # Cleanup
       NopSupervisor.stop_worker(config1.name)
       NopSupervisor.stop_worker(config2.name)
     end
@@ -101,21 +119,20 @@ defmodule Nopea.SupervisorTest do
 
   describe "get_worker/1" do
     @tag timeout: 30_000
-    test "returns pid for known worker" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "returns pid for known worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       config = test_config("get-test")
 
       {:ok, pid} = NopSupervisor.start_worker(config)
       assert {:ok, ^pid} = NopSupervisor.get_worker(config.name)
 
-      # Cleanup
       NopSupervisor.stop_worker(config.name)
     end
 
     @tag timeout: 30_000
-    test "returns error for unknown worker" do
-      unless rust_binary_exists?(), do: flunk("Rust binary not built")
+    test "returns error for unknown worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
       assert {:error, :not_found} = NopSupervisor.get_worker("unknown")
     end

@@ -44,8 +44,7 @@ defmodule Nopea.MixProject do
       {:telemetry, "~> 1.2"},
 
       # Dev/Test
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
-      {:mox, "~> 1.1", only: :test}
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
 

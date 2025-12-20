@@ -7,7 +7,6 @@ defmodule Nopea.WorkerTest do
   @moduletag :integration
 
   setup do
-    # Check if Rust binary exists
     dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
 
     if File.exists?(dev_path) do
@@ -16,35 +15,34 @@ defmodule Nopea.WorkerTest do
       start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
       start_supervised!(Nopea.Git)
 
-      # Clean up test repo directory
-      repo_base = "/tmp/nopea/repos"
+      # Clean up test repo directory using system temp dir
+      repo_base = Path.join(System.tmp_dir!(), "nopea/repos")
       File.rm_rf!(repo_base)
       File.mkdir_p!(repo_base)
 
-      {:ok, repo_base: repo_base}
+      {:ok, repo_base: repo_base, binary_available: true}
     else
       IO.puts("Skipping: Rust binary not built")
-      :ok
+      {:ok, binary_available: false}
     end
   end
 
   describe "start_link/1" do
     @tag timeout: 30_000
-    test "starts a worker with config", context do
-      unless Map.has_key?(context, :repo_base) do
+    test "starts a worker with config", %{binary_available: available} = context do
+      unless available do
         :ok
       else
-        config = test_config("start-link-test")
+        config = test_config("start-link-test", context)
 
         assert {:ok, pid} = Worker.start_link(config)
         assert Process.alive?(pid)
 
-        # Give it a moment to initialize
-        Process.sleep(100)
+        # Wait for initialization
+        wait_for_status(pid, [:initializing, :syncing, :synced, :failed])
 
         state = Worker.get_state(pid)
         assert state.config.name == config.name
-        assert state.status in [:initializing, :syncing, :synced, :failed]
 
         GenServer.stop(pid)
       end
@@ -53,11 +51,11 @@ defmodule Nopea.WorkerTest do
 
   describe "get_state/1" do
     @tag timeout: 30_000
-    test "returns current worker state", context do
-      unless Map.has_key?(context, :repo_base) do
+    test "returns current worker state", %{binary_available: available} = context do
+      unless available do
         :ok
       else
-        config = test_config("get-state-test")
+        config = test_config("get-state-test", context)
 
         {:ok, pid} = Worker.start_link(config)
 
@@ -73,16 +71,16 @@ defmodule Nopea.WorkerTest do
 
   describe "sync_now/1" do
     @tag timeout: 60_000
-    test "triggers immediate sync with real repo", context do
-      unless Map.has_key?(context, :repo_base) do
+    test "triggers immediate sync with real repo", %{binary_available: available} = context do
+      unless available do
         :ok
       else
-        config = test_config("sync-now-test")
+        config = test_config("sync-now-test", context)
 
         {:ok, pid} = Worker.start_link(config)
 
         # Wait for startup sync to complete or fail
-        Process.sleep(2000)
+        wait_for_status(pid, [:synced, :failed], 30_000)
 
         # Manual sync - should work with real repo
         result = Worker.sync_now(pid)
@@ -92,7 +90,6 @@ defmodule Nopea.WorkerTest do
         assert match?(:ok, result) or match?({:error, _}, result)
 
         state = Worker.get_state(pid)
-        # Should have attempted sync
         assert state.status in [:synced, :failed]
 
         GenServer.stop(pid)
@@ -102,11 +99,11 @@ defmodule Nopea.WorkerTest do
 
   describe "whereis/1" do
     @tag timeout: 30_000
-    test "finds worker by repo name via Registry", context do
-      unless Map.has_key?(context, :repo_base) do
+    test "finds worker by repo name via Registry", %{binary_available: available} = context do
+      unless available do
         :ok
       else
-        config = test_config("whereis-test")
+        config = test_config("whereis-test", context)
 
         {:ok, pid} = Worker.start_link(config)
 
@@ -121,26 +118,17 @@ defmodule Nopea.WorkerTest do
 
   describe "sync with real repository" do
     @tag timeout: 120_000
-    test "successfully syncs from a real public repository", context do
-      unless Map.has_key?(context, :repo_base) do
+    test "successfully syncs from a real public repository",
+         %{binary_available: available} = context do
+      unless available do
         :ok
       else
-        # Use octocat/Hello-World - a stable public repo
-        config = %{
-          name: "real-repo-test-#{:rand.uniform(10000)}",
-          url: "https://github.com/octocat/Hello-World.git",
-          branch: "master",
-          path: nil,
-          interval: 300_000,
-          target_namespace: nil
-        }
+        config = test_config("real-repo-test", context)
 
         {:ok, pid} = Worker.start_link(config)
 
-        # Wait for startup sync
-        Process.sleep(5000)
-
-        state = Worker.get_state(pid)
+        # Wait for startup sync with polling
+        state = wait_for_status(pid, [:synced, :failed], 60_000)
 
         # Git sync should succeed (K8s apply will fail without cluster)
         # The state will be :failed due to K8s, but last_commit should be set
@@ -156,7 +144,7 @@ defmodule Nopea.WorkerTest do
   end
 
   # Helper to create test config
-  defp test_config(test_name) do
+  defp test_config(test_name, _context) do
     %{
       name: "#{test_name}-#{:rand.uniform(10000)}",
       url: "https://github.com/octocat/Hello-World.git",
@@ -165,5 +153,30 @@ defmodule Nopea.WorkerTest do
       interval: 300_000,
       target_namespace: nil
     }
+  end
+
+  # Wait for worker to reach one of the expected statuses
+  defp wait_for_status(pid, expected_statuses, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_status(pid, expected_statuses, deadline)
+  end
+
+  defp do_wait_for_status(pid, expected_statuses, deadline) do
+    if System.monotonic_time(:millisecond) > deadline do
+      state = Worker.get_state(pid)
+
+      flunk(
+        "Timeout waiting for status. Current: #{state.status}, expected one of: #{inspect(expected_statuses)}"
+      )
+    end
+
+    state = Worker.get_state(pid)
+
+    if state.status in expected_statuses do
+      state
+    else
+      Process.sleep(100)
+      do_wait_for_status(pid, expected_statuses, deadline)
+    end
   end
 end
