@@ -13,6 +13,7 @@ defmodule Nopea.WorkerTest do
       # Start required services
       start_supervised!(Nopea.Cache)
       start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
+      Application.put_env(:nopea, :enable_git, true)
       start_supervised!(Nopea.Git)
 
       # Clean up test repo directory using system temp dir
