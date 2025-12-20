@@ -8,30 +8,68 @@ defmodule Nopea.Application do
   - Nopea.Git (Rust Port GenServer)
   - Nopea.Supervisor (DynamicSupervisor for Workers)
   - Nopea.Controller (CRD watcher, optional)
+
+  ## Configuration
+
+  Services can be disabled via application config:
+
+  - `enable_cache` - Enables Cache GenServer (default: true)
+  - `enable_git` - Enables Git GenServer (default: true)
+  - `enable_supervisor` - Enables Supervisor and Registry (default: true)
+  - `enable_controller` - Enables Controller (default: true)
+
+  ## Service Dependencies
+
+  The following dependencies exist between services:
+
+  - `Nopea.Supervisor` requires `Nopea.Registry` (automatically started together)
+  - `Nopea.Worker` requires `Nopea.Git` to perform sync operations
+  - `Nopea.Worker` optionally uses `Nopea.Cache` for sync state storage
+
+  Note: In tests, `enable_*` flags are set to false and services are started
+  manually via `start_supervised!/1` for isolation. When doing this, ensure
+  `Application.put_env/3` is called to keep config in sync with running services.
   """
 
   use Application
 
   @impl true
   def start(_type, _args) do
-    children =
-      [
-        # ETS cache for commits, resources, sync state
-        Nopea.Cache,
-        # Registry for worker name lookup
-        {Registry, keys: :unique, name: Nopea.Registry}
-      ] ++
-        if Application.get_env(:nopea, :enable_git, true) do
-          [Nopea.Git]
-        else
-          []
-        end ++
-        [
-          # DynamicSupervisor for Worker processes
-          Nopea.Supervisor
-        ]
+    children = []
 
-    # Add Controller if enabled (watches GitRepository CRDs)
+    # ETS cache for commits, resources, sync state
+    children =
+      if Application.get_env(:nopea, :enable_cache, true) do
+        children ++ [Nopea.Cache]
+      else
+        children
+      end
+
+    # Registry for worker name lookup (always needed if supervisor is enabled)
+    children =
+      if Application.get_env(:nopea, :enable_supervisor, true) do
+        children ++ [{Registry, keys: :unique, name: Nopea.Registry}]
+      else
+        children
+      end
+
+    # Git GenServer (Rust Port)
+    children =
+      if Application.get_env(:nopea, :enable_git, true) do
+        children ++ [Nopea.Git]
+      else
+        children
+      end
+
+    # DynamicSupervisor for Worker processes
+    children =
+      if Application.get_env(:nopea, :enable_supervisor, true) do
+        children ++ [Nopea.Supervisor]
+      else
+        children
+      end
+
+    # Controller (watches GitRepository CRDs)
     children =
       if Application.get_env(:nopea, :enable_controller, true) do
         namespace = Application.get_env(:nopea, :watch_namespace, "default")

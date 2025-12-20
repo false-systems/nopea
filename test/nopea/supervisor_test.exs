@@ -1,116 +1,157 @@
 defmodule Nopea.SupervisorTest do
   use ExUnit.Case, async: false
 
-  alias Nopea.Supervisor, as: AlumSupervisor
+  alias Nopea.Supervisor, as: NopSupervisor
 
-  # Application is started by test_helper.exs
+  # Supervisor tests require Git (Workers call Git on startup)
+  @moduletag :integration
+
+  setup do
+    dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
+
+    if File.exists?(dev_path) do
+      # Set environment to match what we're starting
+      Application.put_env(:nopea, :enable_cache, true)
+      Application.put_env(:nopea, :enable_git, true)
+      Application.put_env(:nopea, :enable_supervisor, true)
+
+      start_supervised!(Nopea.Cache)
+      start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
+      start_supervised!(Nopea.Git)
+      start_supervised!(Nopea.Supervisor)
+
+      # Cleanup any leftover workers on exit
+      on_exit(fn ->
+        try do
+          NopSupervisor.list_workers()
+          |> Enum.each(fn {name, _pid} ->
+            try do
+              NopSupervisor.stop_worker(name)
+            rescue
+              _ -> :ok
+            end
+          end)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, binary_available: true}
+    else
+      IO.puts("Skipping: Rust binary not built")
+      {:ok, binary_available: false}
+    end
+  end
 
   describe "start_worker/1" do
-    test "starts a worker for a repo config" do
-      config = %{
-        name: "test-repo-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+    @tag timeout: 30_000
+    test "starts a worker for a repo config", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
-      assert {:ok, pid} = AlumSupervisor.start_worker(config)
+      config = test_config("start-test")
+
+      assert {:ok, pid} = NopSupervisor.start_worker(config)
       assert Process.alive?(pid)
 
-      # Cleanup
-      AlumSupervisor.stop_worker(config.name)
+      NopSupervisor.stop_worker(config.name)
     end
 
-    test "returns error for duplicate repo name" do
-      config = %{
-        name: "dup-repo-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+    @tag timeout: 30_000
+    test "returns error for duplicate repo name", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
-      {:ok, _pid} = AlumSupervisor.start_worker(config)
-      assert {:error, {:already_started, _}} = AlumSupervisor.start_worker(config)
+      config = test_config("dup-test")
 
-      # Cleanup
-      AlumSupervisor.stop_worker(config.name)
+      {:ok, _pid} = NopSupervisor.start_worker(config)
+      assert {:error, {:already_started, _}} = NopSupervisor.start_worker(config)
+
+      NopSupervisor.stop_worker(config.name)
     end
   end
 
   describe "stop_worker/1" do
-    test "stops a running worker" do
-      config = %{
-        name: "stop-repo-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+    @tag timeout: 30_000
+    test "stops a running worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
-      {:ok, pid} = AlumSupervisor.start_worker(config)
+      config = test_config("stop-test")
+
+      {:ok, pid} = NopSupervisor.start_worker(config)
       assert Process.alive?(pid)
 
-      :ok = AlumSupervisor.stop_worker(config.name)
-      refute Process.alive?(pid)
+      # Monitor the process to wait for termination
+      ref = Process.monitor(pid)
+
+      :ok = NopSupervisor.stop_worker(config.name)
+
+      # Wait for process to actually terminate
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} ->
+          refute Process.alive?(pid)
+      after
+        5_000 ->
+          flunk("Process did not terminate within timeout")
+      end
     end
 
-    test "returns error for unknown worker" do
-      assert {:error, :not_found} = AlumSupervisor.stop_worker("unknown-repo")
+    @tag timeout: 30_000
+    test "returns error for unknown worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
+
+      assert {:error, :not_found} = NopSupervisor.stop_worker("unknown-repo")
     end
   end
 
   describe "list_workers/0" do
-    test "returns list of active workers" do
-      config1 = %{
-        name: "list-repo-1-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo1.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+    @tag timeout: 30_000
+    test "returns list of active workers", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
-      config2 = %{
-        name: "list-repo-2-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo2.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+      config1 = test_config("list-1")
+      config2 = test_config("list-2")
 
-      {:ok, _} = AlumSupervisor.start_worker(config1)
-      {:ok, _} = AlumSupervisor.start_worker(config2)
+      {:ok, _} = NopSupervisor.start_worker(config1)
+      {:ok, _} = NopSupervisor.start_worker(config2)
 
-      workers = AlumSupervisor.list_workers()
+      workers = NopSupervisor.list_workers()
       assert Enum.any?(workers, fn {name, _pid} -> name == config1.name end)
       assert Enum.any?(workers, fn {name, _pid} -> name == config2.name end)
 
-      # Cleanup
-      AlumSupervisor.stop_worker(config1.name)
-      AlumSupervisor.stop_worker(config2.name)
+      NopSupervisor.stop_worker(config1.name)
+      NopSupervisor.stop_worker(config2.name)
     end
   end
 
   describe "get_worker/1" do
-    test "returns pid for known worker" do
-      config = %{
-        name: "get-repo-#{:rand.uniform(1000)}",
-        url: "https://github.com/test/repo.git",
-        branch: "main",
-        path: "deploy/",
-        interval: 300_000
-      }
+    @tag timeout: 30_000
+    test "returns pid for known worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
 
-      {:ok, pid} = AlumSupervisor.start_worker(config)
-      assert {:ok, ^pid} = AlumSupervisor.get_worker(config.name)
+      config = test_config("get-test")
 
-      # Cleanup
-      AlumSupervisor.stop_worker(config.name)
+      {:ok, pid} = NopSupervisor.start_worker(config)
+      assert {:ok, ^pid} = NopSupervisor.get_worker(config.name)
+
+      NopSupervisor.stop_worker(config.name)
     end
 
-    test "returns error for unknown worker" do
-      assert {:error, :not_found} = AlumSupervisor.get_worker("unknown")
+    @tag timeout: 30_000
+    test "returns error for unknown worker", %{binary_available: available} do
+      unless available, do: flunk("Rust binary not built")
+
+      assert {:error, :not_found} = NopSupervisor.get_worker("unknown")
     end
+  end
+
+  # Use a real public repo for tests
+  defp test_config(prefix) do
+    %{
+      name: "#{prefix}-#{:rand.uniform(10000)}",
+      url: "https://github.com/octocat/Hello-World.git",
+      branch: "master",
+      path: nil,
+      interval: 300_000,
+      target_namespace: nil
+    }
   end
 end

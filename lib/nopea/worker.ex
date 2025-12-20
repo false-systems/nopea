@@ -205,12 +205,14 @@ defmodule Nopea.Worker do
           last_sync: now
       }
 
-      # Update cache
-      Cache.put_sync_state(config.name, %{
-        last_sync: now,
-        last_commit: commit_sha,
-        status: :synced
-      })
+      # Update cache if available
+      if Cache.available?() do
+        Cache.put_sync_state(config.name, %{
+          last_sync: now,
+          last_commit: commit_sha,
+          status: :synced
+        })
+      end
 
       # Update CRD status
       update_crd_status(new_state, :synced, "Applied #{count} manifests")

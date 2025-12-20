@@ -21,6 +21,16 @@ defmodule Nopea.Cache do
   # Client API
 
   @doc """
+  Checks if the Cache is available (tables exist).
+
+  Returns `true` if Cache is running and tables are accessible.
+  """
+  @spec available?() :: boolean()
+  def available? do
+    :ets.whereis(@commits_table) != :undefined
+  end
+
+  @doc """
   Starts the cache GenServer.
   """
   def start_link(opts \\ []) do
