@@ -10,6 +10,10 @@ defmodule Nopea.WorkerTest do
     dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
 
     if File.exists?(dev_path) do
+      # Set environment to match what we're starting
+      Application.put_env(:nopea, :enable_cache, true)
+      Application.put_env(:nopea, :enable_git, true)
+
       # Start required services
       start_supervised!(Nopea.Cache)
       start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
@@ -24,6 +28,11 @@ defmodule Nopea.WorkerTest do
           IO.puts("Warning: Failed to clean repo directory #{repo_base}: #{inspect(reason)}")
       end
       File.mkdir_p!(repo_base)
+
+      # Cleanup cloned repos on exit
+      on_exit(fn ->
+        File.rm_rf!(repo_base)
+      end)
 
       {:ok, repo_base: repo_base, binary_available: true}
     else

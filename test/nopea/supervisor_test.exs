@@ -10,6 +10,11 @@ defmodule Nopea.SupervisorTest do
     dev_path = Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
 
     if File.exists?(dev_path) do
+      # Set environment to match what we're starting
+      Application.put_env(:nopea, :enable_cache, true)
+      Application.put_env(:nopea, :enable_git, true)
+      Application.put_env(:nopea, :enable_supervisor, true)
+
       start_supervised!(Nopea.Cache)
       start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
       start_supervised!(Nopea.Git)
