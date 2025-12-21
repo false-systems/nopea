@@ -169,7 +169,7 @@ defmodule Nopea.ApplierTest do
   describe "read_manifests_from_path/1" do
     setup do
       # Create a temp directory for test files
-      tmp_dir = Path.join(System.tmp_dir!(), "nopea_applier_test_#{:rand.uniform(100_000)}")
+      tmp_dir = Path.join(System.tmp_dir!(), "nopea_applier_test_#{System.unique_integer([:positive])}")
       File.mkdir_p!(tmp_dir)
 
       on_exit(fn ->
