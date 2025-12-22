@@ -2,9 +2,53 @@ defmodule Nopea.Webhook.Router do
   @moduledoc """
   Plug Router for handling webhook requests.
 
-  Endpoints:
-  - POST /webhook/:repo - Receive webhook from GitHub/GitLab
-  - GET /health - Health check endpoint
+  ## Endpoints
+
+  - `POST /webhook/:repo` – Receive webhook from GitHub/GitLab
+  - `GET /health` – Health check endpoint
+
+  ## Configuration
+
+  This router verifies incoming webhook signatures using a shared secret
+  configured under the `:nopea` application:
+
+      # config/config.exs
+      import Config
+
+      config :nopea,
+        webhook_secret: System.get_env("NOPEA_WEBHOOK_SECRET") || "change-me"
+
+  The `webhook_secret` must match the secret/token configured on the
+  webhook provider (e.g. GitHub or GitLab). It is read at runtime via:
+
+      Application.get_env(:nopea, :webhook_secret, "")
+
+  If the secret is missing or does not match, incoming webhooks will be
+  rejected with `401` (`invalid_signature`).
+
+  ## Starting the webhook server
+
+  `Nopea.Webhook.Router` is a `Plug.Router` and can be used as the `:plug`
+  for a `Plug.Cowboy` HTTP server. A typical setup in your application
+  supervision tree might look like this:
+
+      # lib/nopea/application.ex
+      def start(_type, _args) do
+        children = [
+          {
+            Plug.Cowboy,
+            scheme: :http,
+            plug: Nopea.Webhook.Router,
+            options: [port: String.to_integer(System.get_env("PORT") || "4001")]
+          }
+        ]
+
+        opts = [strategy: :one_for_one, name: Nopea.Supervisor]
+        Supervisor.start_link(children, opts)
+      end
+
+  You can mount the router under a different plug or path if you already
+  have a Plug/Cowboy server; it behaves like any other `Plug.Router`.
   """
 
   use Plug.Router
