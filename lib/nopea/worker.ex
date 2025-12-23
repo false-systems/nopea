@@ -378,14 +378,15 @@ defmodule Nopea.Worker do
     maybe_emit(event)
   end
 
-  defp emit_failure_event(state, reason, _duration_ms) do
+  defp emit_failure_event(state, reason, duration_ms) do
     config = state.config
 
     event =
       Events.sync_failed(config.name, %{
         namespace: config.target_namespace,
         error: reason,
-        commit: state.last_commit
+        commit: state.last_commit,
+        duration_ms: duration_ms
       })
 
     maybe_emit(event)

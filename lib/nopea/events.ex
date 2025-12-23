@@ -29,7 +29,8 @@ defmodule Nopea.Events do
       {:ok, json} = Events.to_json(event)
   """
 
-  @specversion "0.5.0"
+  # CloudEvents spec version (CDEvents uses CloudEvents as transport)
+  @specversion "1.0"
 
   @type event_type ::
           :service_deployed
@@ -79,7 +80,7 @@ defmodule Nopea.Events do
   @spec new(map()) :: t()
   def new(%{type: type, source: source, subject_id: subject_id, content: content}) do
     %__MODULE__{
-      id: Nopea.ULID.generate(),
+      id: generate_id(),
       type: Map.fetch!(@event_type_map, type),
       source: source,
       specversion: @specversion,
@@ -203,9 +204,10 @@ defmodule Nopea.Events do
       subject_id: repo_name,
       content: %{
         environment: %{id: namespace, source: "/nopea"},
-        outcome: :failure,
-        error: opts[:error],
-        commit: opts[:commit]
+        outcome: "failure",
+        error: normalize_error(opts[:error]),
+        commit: opts[:commit],
+        duration_ms: opts[:duration_ms]
       }
     })
   end
@@ -228,4 +230,21 @@ defmodule Nopea.Events do
 
     Jason.encode(json_map)
   end
+
+  # Generate ULID with fallback when Agent not running (e.g., in tests)
+  defp generate_id do
+    case Process.whereis(Nopea.ULID) do
+      nil -> Nopea.ULID.generate_random()
+      _pid -> Nopea.ULID.generate()
+    end
+  end
+
+  # Convert error tuples/terms to JSON-serializable format
+  defp normalize_error({type, message}) when is_atom(type) do
+    %{type: Atom.to_string(type), message: to_string(message)}
+  end
+
+  defp normalize_error(error) when is_binary(error), do: error
+  defp normalize_error(nil), do: nil
+  defp normalize_error(error), do: inspect(error)
 end

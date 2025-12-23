@@ -53,13 +53,31 @@ defmodule Nopea.EventsTest do
         Events.sync_failed("my-app", %{
           namespace: "production",
           error: {:git_error, "network timeout"},
-          commit: nil
+          commit: nil,
+          duration_ms: 500
         })
 
       # sync_failed uses service.removed with failure indicator
       assert event.type == "dev.cdevents.service.removed.0.3.0"
-      assert event.subject.content.error == {:git_error, "network timeout"}
-      assert event.subject.content.outcome == :failure
+      # Error is normalized to JSON-serializable map
+      assert event.subject.content.error == %{type: "git_error", message: "network timeout"}
+      assert event.subject.content.outcome == "failure"
+      assert event.subject.content.duration_ms == 500
+    end
+
+    test "serializes to JSON without errors" do
+      event =
+        Events.sync_failed("my-app", %{
+          error: {:git_error, "network timeout"},
+          namespace: "production"
+        })
+
+      # Should not raise - tuples are normalized to maps
+      {:ok, json} = Events.to_json(event)
+      decoded = Jason.decode!(json)
+
+      assert decoded["subject"]["content"]["error"]["type"] == "git_error"
+      assert decoded["subject"]["content"]["error"]["message"] == "network timeout"
     end
   end
 
@@ -82,7 +100,7 @@ defmodule Nopea.EventsTest do
       assert String.length(event.id) == 26
       assert event.type == "dev.cdevents.service.deployed.0.3.0"
       assert event.source == "/nopea/worker/my-app"
-      assert event.specversion == "0.5.0"
+      assert event.specversion == "1.0"
       assert %DateTime{} = event.timestamp
 
       # Subject fields
@@ -137,7 +155,7 @@ defmodule Nopea.EventsTest do
       assert decoded["id"] == event.id
       assert decoded["type"] == "dev.cdevents.service.deployed.0.3.0"
       assert decoded["source"] == "/nopea/worker/my-app"
-      assert decoded["specversion"] == "0.5.0"
+      assert decoded["specversion"] == "1.0"
       assert is_binary(decoded["timestamp"])
 
       # CDEvents subject
