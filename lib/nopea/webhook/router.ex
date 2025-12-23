@@ -120,9 +120,11 @@ defmodule Nopea.Webhook.Router do
 
       pid ->
         try do
-          state = GenServer.call(pid, :get_state, 1000)
-          watching = state.watch_ref != nil
-          repo_count = map_size(state.repos)
+          # 2s timeout - K8s probes typically have 1-10s timeouts
+          state = GenServer.call(pid, :get_state, 2000)
+          # Controller returns Map.from_struct, so use map access
+          watching = state[:watch_ref] != nil
+          repo_count = map_size(state[:repos] || %{})
 
           if watching do
             {:ok, %{watching: true, repo_count: repo_count}}

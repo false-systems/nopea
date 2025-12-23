@@ -397,6 +397,7 @@ defmodule Nopea.WebhookTest do
 
       assert body["status"] == "unhealthy"
       assert body["checks"]["cache"] == "down"
+      assert body["checks"]["ulid"] == "up"
     end
 
     test "GET /ready returns 200 when controller is watching" do
@@ -456,12 +457,19 @@ defmodule Nopea.WebhookTest do
   # Helper to ensure a process is stopped
   defp ensure_process_stopped(name) do
     case Process.whereis(name) do
-      nil -> :ok
-      pid -> GenServer.stop(pid, :normal, 100)
-    end
+      nil ->
+        :ok
 
-    # Wait for process to fully terminate
-    Process.sleep(10)
+      pid ->
+        ref = Process.monitor(pid)
+        GenServer.stop(pid, :normal, 100)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        after
+          200 -> :ok
+        end
+    end
   end
 end
 
