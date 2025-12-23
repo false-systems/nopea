@@ -8,6 +8,8 @@ defmodule Nopea.K8s do
   - Resource watching
   """
 
+  @behaviour Nopea.K8s.Behaviour
+
   require Logger
 
   @git_repository_api_version "nopea.io/v1alpha1"
