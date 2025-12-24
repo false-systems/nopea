@@ -21,7 +21,7 @@ defmodule Nopea.DriftDetectorTest do
     :ok
   end
 
-  describe "detect_drift_with_cluster/4" do
+  describe "detect_drift_with_cluster/3" do
     test "returns :no_drift when all states match" do
       manifest = deployment_manifest("my-app", replicas: 3)
 
