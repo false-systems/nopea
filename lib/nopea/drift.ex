@@ -137,6 +137,88 @@ defmodule Nopea.Drift do
   end
 
   @doc """
+  Performs three-way drift detection with cluster state.
+
+  This is the main entry point for full drift detection that compares:
+  - `last_applied` - What we last applied to the cluster (from cache)
+  - `desired` - What's currently in git (desired state)
+  - `live` - What's actually in the K8s cluster (from K8s GET)
+
+  All manifests are normalized before comparison to ignore K8s-managed fields.
+
+  ## Returns
+
+  - `:no_drift` - All states match (no action needed)
+  - `{:git_change, diff}` - Git changed, cluster matches last applied
+  - `{:manual_drift, diff}` - Cluster was manually changed
+  - `{:conflict, diff}` - Both git and cluster have diverged
+  """
+  @spec detect_drift_with_cluster(map(), map(), map()) :: diff_result()
+  def detect_drift_with_cluster(last_applied, desired, live) do
+    three_way_diff(last_applied, desired, live)
+  end
+
+  @doc """
+  Checks a manifest for drift by fetching live state from K8s.
+
+  This function:
+  1. Extracts resource key from the manifest
+  2. Looks up last_applied from Cache
+  3. Fetches live state from K8s cluster
+  4. Performs three-way drift detection
+
+  ## Options
+
+  - `:k8s_module` - K8s module to use (default: `Nopea.K8s`)
+  - `:cache_module` - Cache module to use (default: `Nopea.Cache`)
+
+  ## Returns
+
+  - `:no_drift` - All states match
+  - `{:git_change, diff}` - Git has changed
+  - `{:manual_drift, diff}` - Cluster was manually modified
+  - `{:conflict, diff}` - Both changed
+  - `:new_resource` - Resource doesn't exist in cluster or cache
+  - `:needs_apply` - Resource exists in cluster but not in cache (needs baseline)
+  """
+  @spec check_manifest_drift(String.t(), map(), keyword()) ::
+          diff_result() | :new_resource | :needs_apply
+  def check_manifest_drift(repo_name, manifest, opts \\ []) do
+    k8s_module = Keyword.get(opts, :k8s_module, Nopea.K8s)
+    cache_module = Keyword.get(opts, :cache_module, Nopea.Cache)
+
+    resource_key = Nopea.Applier.resource_key(manifest)
+    api_version = Map.fetch!(manifest, "apiVersion")
+    kind = Map.fetch!(manifest, "kind")
+    name = get_in(manifest, ["metadata", "name"])
+    namespace = get_in(manifest, ["metadata", "namespace"]) || "default"
+
+    # Get last_applied from cache
+    last_applied_result = cache_module.get_last_applied(repo_name, resource_key)
+
+    # Get live state from cluster
+    live_result = k8s_module.get_resource(api_version, kind, name, namespace)
+
+    case {last_applied_result, live_result} do
+      # No cache, no cluster -> new resource
+      {{:error, :not_found}, {:error, _}} ->
+        :new_resource
+
+      # No cache, but exists in cluster -> needs apply to establish baseline
+      {{:error, :not_found}, {:ok, _live}} ->
+        :needs_apply
+
+      # Has cache, no cluster -> resource was deleted, treat as new
+      {{:ok, _last}, {:error, _}} ->
+        :new_resource
+
+      # Both exist -> do three-way diff
+      {{:ok, last_applied}, {:ok, live}} ->
+        detect_drift_with_cluster(last_applied, manifest, live)
+    end
+  end
+
+  @doc """
   Computes a normalized hash of a manifest for drift detection.
 
   The manifest is normalized before hashing, so K8s-added fields

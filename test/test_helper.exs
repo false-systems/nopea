@@ -1,6 +1,9 @@
 # Integration tests require the Rust binary to be built
 # Run with: mix test --include integration
 
+# Define Mox mocks
+Mox.defmock(Nopea.K8sMock, for: Nopea.K8s.Behaviour)
+
 rust_binary_path =
   Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
 

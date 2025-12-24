@@ -284,24 +284,28 @@ defmodule Nopea.Worker do
     else
       with {:ok, files} <- list_manifest_files(repo_path, config.path),
            {:ok, manifests} <- read_and_parse_manifests(repo_path, config.path, files) do
-        # Check each manifest for drift
-        {drifted, _unchanged} = detect_drifted_manifests(config.name, manifests)
+        # Check each manifest for drift (returns {to_apply, unchanged})
+        # where to_apply is [{manifest, drift_type}, ...]
+        {to_apply, _unchanged} = detect_drifted_manifests(config.name, manifests)
 
-        Logger.debug("Drift detection for #{config.name}: #{length(drifted)} changed")
+        Logger.debug("Drift detection for #{config.name}: #{length(to_apply)} need apply")
 
-        # Only re-apply drifted resources
-        if Enum.empty?(drifted) do
+        # Only re-apply resources that have drifted
+        if Enum.empty?(to_apply) do
           {:ok, 0, 0}
         else
-          # Emit CDEvents for detected drift
-          emit_drift_events(state, drifted)
+          # Emit CDEvents for detected drift (with drift types)
+          emit_drift_events(state, to_apply)
+
+          # Extract just the manifests for applying
+          manifests_to_apply = Enum.map(to_apply, fn {manifest, _type} -> manifest end)
 
           # Re-apply drifted manifests
-          case K8s.apply_manifests(drifted, config.target_namespace) do
+          case K8s.apply_manifests(manifests_to_apply, config.target_namespace) do
             {:ok, count} ->
               # Update cache with new state
-              store_last_applied(config.name, drifted)
-              {:ok, length(drifted), count}
+              store_last_applied(config.name, manifests_to_apply)
+              {:ok, length(to_apply), count}
 
             {:error, _} = error ->
               error
@@ -311,44 +315,53 @@ defmodule Nopea.Worker do
     end
   end
 
-  # Detect which manifests have drifted from last-applied state
+  # Detect which manifests have drifted using full three-way comparison
+  # Returns {to_apply, unchanged} where to_apply is [{manifest, drift_type}, ...]
   defp detect_drifted_manifests(repo_name, manifests) do
     if not Cache.available?() do
-      # No cache - treat all as drifted
-      {manifests, []}
+      # No cache - treat all as needing apply (new resources)
+      to_apply = Enum.map(manifests, &{&1, :new_resource})
+      {to_apply, []}
     else
-      Enum.split_with(manifests, fn manifest ->
-        resource_key = Applier.resource_key(manifest)
-        desired_normalized = Drift.normalize(manifest)
+      {to_apply, unchanged} =
+        Enum.reduce(manifests, {[], []}, fn manifest, {apply_acc, unchanged_acc} ->
+          case Drift.check_manifest_drift(repo_name, manifest) do
+            :no_drift ->
+              {apply_acc, [manifest | unchanged_acc]}
 
-        case Cache.get_last_applied(repo_name, resource_key) do
-          {:error, :not_found} ->
-            # New resource - treat as drifted (needs apply)
-            true
+            :new_resource ->
+              {[{manifest, :new_resource} | apply_acc], unchanged_acc}
 
-          {:ok, last_applied} ->
-            # Compare desired to last-applied (two-way comparison)
-            # Full three-way drift detection requires K8s GET (future enhancement)
-            case Drift.git_changed?(last_applied, desired_normalized) do
-              false -> false
-              {:changed, _} -> true
-            end
-        end
-      end)
+            :needs_apply ->
+              {[{manifest, :needs_apply} | apply_acc], unchanged_acc}
+
+            {:git_change, _diff} ->
+              {[{manifest, :git_change} | apply_acc], unchanged_acc}
+
+            {:manual_drift, _diff} ->
+              {[{manifest, :manual_drift} | apply_acc], unchanged_acc}
+
+            {:conflict, _diff} ->
+              # On conflict, git wins (desired state takes precedence)
+              {[{manifest, :conflict} | apply_acc], unchanged_acc}
+          end
+        end)
+
+      {Enum.reverse(to_apply), Enum.reverse(unchanged)}
     end
   end
 
-  # Emit CDEvents for drifted resources
-  defp emit_drift_events(state, drifted_manifests) do
+  # Emit CDEvents for drifted resources with their drift types
+  defp emit_drift_events(state, to_apply) do
     config = state.config
 
-    Enum.each(drifted_manifests, fn manifest ->
+    Enum.each(to_apply, fn {manifest, drift_type} ->
       resource_key = Applier.resource_key(manifest)
 
       event =
         Events.drift_detected(config.name, %{
           resource_key: resource_key,
-          drift_type: :git_change,
+          drift_type: drift_type,
           namespace: config.target_namespace,
           commit: state.last_commit,
           action: :healed
