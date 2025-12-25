@@ -138,8 +138,14 @@ defmodule Nopea.LeaderElection do
         {:noreply, %{state | is_leader: true, renew_timer: timer}}
 
       {:ok, :renewed} ->
+        # We already held the lease (e.g., pod restart) - become leader
+        unless state.is_leader do
+          Logger.info("Reclaimed leadership for #{state.lease_name}")
+          notify_controller(true)
+        end
+
         timer = schedule_renew(state)
-        {:noreply, %{state | renew_timer: timer}}
+        {:noreply, %{state | is_leader: true, renew_timer: timer}}
 
       {:ok, :not_leader} ->
         if state.is_leader do
@@ -147,6 +153,7 @@ defmodule Nopea.LeaderElection do
           notify_controller(false)
         end
 
+        cancel_timer(state.renew_timer)
         schedule_retry(state)
         {:noreply, %{state | is_leader: false, renew_timer: nil}}
 
@@ -167,12 +174,14 @@ defmodule Nopea.LeaderElection do
       {:ok, :lost} ->
         Logger.warning("Lost leadership - failed to renew lease")
         notify_controller(false)
+        cancel_timer(state.renew_timer)
         schedule_retry(state)
         {:noreply, %{state | is_leader: false, renew_timer: nil}}
 
       {:ok, :not_leader} ->
         Logger.warning("Lost leadership - lease taken by another pod")
         notify_controller(false)
+        cancel_timer(state.renew_timer)
         schedule_retry(state)
         {:noreply, %{state | is_leader: false, renew_timer: nil}}
 
@@ -180,6 +189,7 @@ defmodule Nopea.LeaderElection do
         Logger.error("Failed to renew lease: #{inspect(reason)}")
         # On error, assume we lost leadership for safety
         notify_controller(false)
+        cancel_timer(state.renew_timer)
         schedule_retry(state)
         {:noreply, %{state | is_leader: false, renew_timer: nil}}
     end
@@ -332,6 +342,13 @@ defmodule Nopea.LeaderElection do
 
   defp schedule_retry(state) do
     Process.send_after(self(), :try_acquire, state.retry_period_seconds * 1000)
+  end
+
+  defp cancel_timer(nil), do: :ok
+
+  defp cancel_timer(timer_ref) do
+    Process.cancel_timer(timer_ref)
+    :ok
   end
 
   # K8s uses MicroTime format (RFC3339 with microseconds)

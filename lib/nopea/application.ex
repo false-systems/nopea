@@ -131,6 +131,6 @@ defmodule Nopea.Application do
 
   # Generate unique node identity for leader election when POD_NAME not set
   defp node_identity do
-    "nopea-#{:erlang.phash2(node())}-#{System.system_time(:millisecond)}"
+    "nopea-#{:erlang.phash2(node())}-#{System.unique_integer([:positive, :monotonic])}"
   end
 end

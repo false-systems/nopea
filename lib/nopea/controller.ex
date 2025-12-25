@@ -77,6 +77,16 @@ defmodule Nopea.Controller do
 
   @impl true
   def handle_info(:start_watch, state) do
+    # Skip if in standby mode (prevents race condition with delayed messages)
+    if state.standby do
+      Logger.debug("Ignoring :start_watch - controller in standby mode")
+      {:noreply, state}
+    else
+      do_start_watch(state)
+    end
+  end
+
+  defp do_start_watch(state) do
     Logger.info("Starting GitRepository watch for namespace: #{state.namespace}")
 
     # First, list existing resources to sync
