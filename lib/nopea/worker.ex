@@ -277,6 +277,18 @@ defmodule Nopea.Worker do
   # Reconcile with drift detection - only re-apply changed resources
   defp reconcile_with_drift_detection(state) do
     config = state.config
+
+    # Check if repository is suspended
+    if config[:suspend] do
+      Logger.debug("Repository #{config.name} is suspended, skipping reconcile")
+      {:ok, 0, 0}
+    else
+      do_reconcile(state)
+    end
+  end
+
+  defp do_reconcile(state) do
+    config = state.config
     repo_path = repo_path(config.name)
 
     if not File.exists?(repo_path) do
@@ -285,7 +297,7 @@ defmodule Nopea.Worker do
       with {:ok, files} <- list_manifest_files(repo_path, config.path),
            {:ok, manifests} <- read_and_parse_manifests(repo_path, config.path, files) do
         # Check each manifest for drift (returns {to_apply, unchanged})
-        # where to_apply is [{manifest, drift_type}, ...]
+        # where to_apply is [{manifest, drift_type, live}, ...]
         {to_apply, _unchanged} = detect_drifted_manifests(config.name, manifests)
 
         Logger.debug("Drift detection for #{config.name}: #{length(to_apply)} need apply")
@@ -294,7 +306,7 @@ defmodule Nopea.Worker do
         if Enum.empty?(to_apply) do
           {:ok, 0, 0}
         else
-          # Filter out resources with break-glass annotation
+          # Filter out resources with break-glass annotation and heal_policy
           {to_heal, skipped} = filter_for_healing(to_apply, config)
 
           # Emit CDEvents for ALL detected drift (including skipped)
@@ -360,9 +372,11 @@ defmodule Nopea.Worker do
     end
   end
 
-  # Filter drifted manifests based on break-glass annotations
+  # Filter drifted manifests based on heal_policy and break-glass annotations
   # Returns {to_heal, skipped} where each is [{manifest, drift_type, live}, ...]
-  defp filter_for_healing(to_apply, _config) do
+  defp filter_for_healing(to_apply, config) do
+    heal_policy = config[:heal_policy] || :auto
+
     Enum.split_with(to_apply, fn {_manifest, drift_type, live} ->
       case drift_type do
         # Always heal git changes and new resources - git is source of truth
@@ -375,15 +389,32 @@ defmodule Nopea.Worker do
         :needs_apply ->
           true
 
-        # For manual drift, check break-glass annotation
+        # For manual drift, check policy and break-glass annotation
         :manual_drift ->
-          not healing_suspended?(live)
+          should_heal_manual_drift?(heal_policy, live)
 
-        # Conflict: git wins, but check annotation
+        # Conflict: check policy and annotation
         :conflict ->
-          not healing_suspended?(live)
+          should_heal_manual_drift?(heal_policy, live)
       end
     end)
+  end
+
+  # Determine if manual drift should be healed based on policy and annotation
+  defp should_heal_manual_drift?(heal_policy, live) do
+    case heal_policy do
+      :auto ->
+        # Auto-heal unless break-glass annotation
+        not healing_suspended?(live)
+
+      :manual ->
+        # Never auto-heal, operator must intervene
+        false
+
+      :notify ->
+        # Same as manual, but with webhook (future)
+        false
+    end
   end
 
   # Check if a live resource has the break-glass annotation
