@@ -6,6 +6,13 @@ defmodule Nopea.Controller do
   - ADDED: Starts a new Worker
   - MODIFIED: Updates Worker if needed
   - DELETED: Stops the Worker
+
+  ## Standby Mode
+
+  When leader election is enabled, the controller starts in standby mode.
+  It waits for `{:leader, true}` message from LeaderElection before
+  starting to watch CRDs. On `{:leader, false}`, it stops all workers
+  and returns to standby.
   """
 
   use GenServer
@@ -20,7 +27,8 @@ defmodule Nopea.Controller do
     :namespace,
     :watch_ref,
     :resource_version,
-    repos: %{}
+    repos: %{},
+    standby: false
   ]
 
   # Client API
@@ -42,16 +50,20 @@ defmodule Nopea.Controller do
   @impl true
   def init(opts) do
     namespace = Keyword.get(opts, :namespace, @default_namespace)
+    standby = Keyword.get(opts, :standby, false)
 
-    Logger.info("Controller starting, watching namespace: #{namespace}")
+    Logger.info("Controller starting, watching namespace: #{namespace}, standby: #{standby}")
 
     state = %__MODULE__{
       namespace: namespace,
-      repos: %{}
+      repos: %{},
+      standby: standby
     }
 
-    # Start watching after init completes
-    send(self(), :start_watch)
+    # Only start watching if not in standby mode
+    unless standby do
+      send(self(), :start_watch)
+    end
 
     {:ok, state}
   end
@@ -63,6 +75,61 @@ defmodule Nopea.Controller do
 
   @impl true
   def handle_info(:start_watch, state) do
+    # Skip if in standby mode (prevents race condition with delayed messages)
+    if state.standby do
+      Logger.debug("Ignoring :start_watch - controller in standby mode")
+      {:noreply, state}
+    else
+      do_start_watch(state)
+    end
+  end
+
+  def handle_info(:reconnect, state) do
+    Logger.info("Reconnecting watch...")
+    send(self(), :start_watch)
+    {:noreply, state}
+  end
+
+  def handle_info({:watch_event, event}, state) do
+    new_state = handle_watch_event(event, state)
+    {:noreply, new_state}
+  end
+
+  def handle_info({:watch_error, reason}, state) do
+    Logger.warning("Watch error: #{inspect(reason)}, reconnecting...")
+    schedule_reconnect()
+    {:noreply, %{state | watch_ref: nil}}
+  end
+
+  def handle_info({:watch_done, _ref}, state) do
+    Logger.info("Watch stream ended, reconnecting...")
+    schedule_reconnect()
+    {:noreply, %{state | watch_ref: nil}}
+  end
+
+  # Leadership messages from LeaderElection
+  def handle_info({:leader, true}, state) do
+    Logger.info("Became leader, starting CRD watch")
+    send(self(), :start_watch)
+    {:noreply, %{state | standby: false}}
+  end
+
+  def handle_info({:leader, false}, state) do
+    Logger.info("Lost leadership, stopping all workers and entering standby")
+
+    # Stop all workers
+    Enum.each(state.repos, fn {name, _version} ->
+      case Supervisor.stop_worker(name) do
+        :ok -> Logger.debug("Stopped worker: #{name}")
+        {:error, reason} -> Logger.warning("Failed to stop worker #{name}: #{inspect(reason)}")
+      end
+    end)
+
+    # Clear state and enter standby
+    {:noreply, %{state | standby: true, watch_ref: nil, repos: %{}}}
+  end
+
+  defp do_start_watch(state) do
     Logger.info("Starting GitRepository watch for namespace: #{state.namespace}")
 
     # First, list existing resources to sync
@@ -84,33 +151,6 @@ defmodule Nopea.Controller do
         schedule_reconnect()
         {:noreply, state}
     end
-  end
-
-  @impl true
-  def handle_info(:reconnect, state) do
-    Logger.info("Reconnecting watch...")
-    send(self(), :start_watch)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info({:watch_event, event}, state) do
-    new_state = handle_watch_event(event, state)
-    {:noreply, new_state}
-  end
-
-  @impl true
-  def handle_info({:watch_error, reason}, state) do
-    Logger.warning("Watch error: #{inspect(reason)}, reconnecting...")
-    schedule_reconnect()
-    {:noreply, %{state | watch_ref: nil}}
-  end
-
-  @impl true
-  def handle_info({:watch_done, _ref}, state) do
-    Logger.info("Watch stream ended, reconnecting...")
-    schedule_reconnect()
-    {:noreply, %{state | watch_ref: nil}}
   end
 
   # Private functions
