@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sykli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Sykli
+        run: |
+          curl -fsSL https://github.com/yairfalse/sykli/releases/download/v0.2.0/sykli-linux-amd64 -o sykli
+          chmod +x sykli
+          sudo mv sykli /usr/local/bin/
+
+      - name: Setup Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Run Pipeline
+        run: sykli run
