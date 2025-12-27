@@ -54,20 +54,18 @@ pipeline do
   end
 
   # ============================================================================
-  # HELM VALIDATION (uncomment when charts/nopea exists)
+  # HELM VALIDATION
   # ============================================================================
 
-  # task "helm-lint" do
-  #   container "alpine/k8s:1.30.6"
-  #   run "helm lint charts/nopea"
-  #   inputs helm_inputs
-  # end
+  task "helm-lint" do
+    run "helm lint charts/nopea"
+    inputs helm_inputs
+  end
 
-  # task "helm-template" do
-  #   container "alpine/k8s:1.30.6"
-  #   run "helm template nopea charts/nopea --debug > /dev/null"
-  #   after_ ["helm-lint"]
-  #   inputs helm_inputs
-  # end
+  task "helm-template" do
+    run "helm template nopea charts/nopea --debug > /dev/null"
+    after_ ["helm-lint"]
+    inputs helm_inputs
+  end
 end
 """)
