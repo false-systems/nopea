@@ -51,20 +51,20 @@ pipeline do
   end
 
   # ============================================================================
-  # HELM (using latest tag)
+  # HELM (runs on host - helm installed separately if needed)
+  # Note: Skip on CI until helm is installed
   # ============================================================================
 
-  task "helm-lint" do
-    container "alpine/helm:latest"
-    run "helm lint charts/nopea"
-    inputs helm_inputs
-  end
+  # Commented out until helm is set up in CI
+  # task "helm-lint" do
+  #   run "helm lint charts/nopea"
+  #   inputs helm_inputs
+  # end
 
-  task "helm-template" do
-    container "alpine/helm:latest"
-    run "helm template nopea charts/nopea --debug > /dev/null"
-    after_ ["helm-lint"]
-    inputs helm_inputs
-  end
+  # task "helm-template" do
+  #   run "helm template nopea charts/nopea --debug > /dev/null"
+  #   after_ ["helm-lint"]
+  #   inputs helm_inputs
+  # end
 end
 """)
