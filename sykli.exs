@@ -4,7 +4,9 @@
 # Run with: sykli run
 # Visualize with: sykli graph
 
-Mix.install([{:sykli, "~> 0.2"}])
+Mix.install([
+  {:sykli_sdk, github: "yairfalse/sykli", sparse: "sdk/elixir"}
+])
 
 Code.eval_string("""
 use Sykli
