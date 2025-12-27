@@ -24,5 +24,11 @@ jobs:
           elixir-version: '1.16'
           otp-version: '26'
 
+      - name: Debug files
+        run: |
+          pwd
+          ls -la sykli* || echo "No sykli files"
+          ls -la *.exs || echo "No .exs files"
+
       - name: Run Pipeline
         run: sykli run
