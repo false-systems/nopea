@@ -41,7 +41,7 @@ defmodule Nopea.K8s do
 
   @doc """
   Updates the status of a GitRepository resource.
-  Uses the status subresource (PATCH /status).
+  Uses server-side apply on the status subresource.
   """
   @spec update_status(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def update_status(repo_name, namespace, status) do
@@ -56,12 +56,12 @@ defmodule Nopea.K8s do
         "status" => status
       }
 
+      # Use server-side apply for status updates
       operation =
-        K8s.Client.patch(
-          @git_repository_api_version,
-          @git_repository_kind,
-          [namespace: namespace, name: repo_name],
+        K8s.Client.apply(
           status_resource,
+          field_manager: "nopea",
+          force: true,
           subresource: "status"
         )
 

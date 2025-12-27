@@ -19,11 +19,12 @@ defmodule Nopea.Applier do
   def parse_manifests(yaml_content) do
     case YamlElixir.read_all_from_string(yaml_content) do
       {:ok, documents} ->
-        # Filter out empty documents (nil or empty maps)
+        # Filter out empty documents and those without required fields
         manifests =
           documents
           |> Enum.reject(&is_nil/1)
           |> Enum.reject(&(map_size(&1) == 0))
+          |> Enum.filter(&has_required_fields?/1)
 
         {:ok, manifests}
 
@@ -186,4 +187,15 @@ defmodule Nopea.Applier do
       end
     end
   end
+
+  # Check if a manifest has required K8s fields
+  defp has_required_fields?(manifest) when is_map(manifest) do
+    Map.has_key?(manifest, "apiVersion") and
+      Map.has_key?(manifest, "kind") and
+      Map.has_key?(manifest, "metadata") and
+      is_map(Map.get(manifest, "metadata")) and
+      Map.has_key?(Map.get(manifest, "metadata"), "name")
+  end
+
+  defp has_required_fields?(_), do: false
 end
