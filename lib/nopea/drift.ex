@@ -36,12 +36,14 @@ defmodule Nopea.Drift do
     "creationTimestamp",
     "generation",
     "managedFields",
-    "selfLink"
+    "selfLink",
+    "namespace"
   ]
 
-  # Annotations that should be stripped
+  # Annotations that should be stripped (added by K8s controllers)
   @k8s_managed_annotations [
-    "kubectl.kubernetes.io/last-applied-configuration"
+    "kubectl.kubernetes.io/last-applied-configuration",
+    "deployment.kubernetes.io/revision"
   ]
 
   @doc """
@@ -61,6 +63,128 @@ defmodule Nopea.Drift do
     |> strip_status()
     |> strip_managed_metadata()
     |> strip_managed_annotations()
+    |> strip_controller_managed_fields()
+  end
+
+  # Strip fields commonly managed by K8s controllers that cause false drift
+  defp strip_controller_managed_fields(manifest) do
+    kind = Map.get(manifest, "kind")
+    strip_controller_fields_by_kind(manifest, kind)
+  end
+
+  defp strip_controller_fields_by_kind(manifest, "Deployment") do
+    manifest
+    |> update_in(["spec"], &Map.drop(&1 || %{}, ["replicas"]))
+    |> strip_rolling_update_defaults()
+    |> strip_pod_spec_defaults()
+  end
+
+  defp strip_controller_fields_by_kind(manifest, "Service") do
+    update_in(manifest, ["spec"], fn spec ->
+      Map.drop(spec || %{}, [
+        "clusterIP",
+        "clusterIPs",
+        "internalTrafficPolicy",
+        "ipFamilies",
+        "ipFamilyPolicy",
+        "sessionAffinity"
+      ])
+    end)
+  end
+
+  defp strip_controller_fields_by_kind(manifest, _), do: manifest
+
+  defp strip_rolling_update_defaults(manifest) do
+    case get_in(manifest, ["spec", "strategy", "rollingUpdate"]) do
+      nil ->
+        manifest
+
+      rolling_update ->
+        cleaned = Map.drop(rolling_update, ["maxSurge"])
+        put_in(manifest, ["spec", "strategy", "rollingUpdate"], cleaned)
+    end
+  end
+
+  # Strip defaulted fields from pod spec that K8s adds
+  defp strip_pod_spec_defaults(manifest) do
+    template_spec_path = ["spec", "template", "spec"]
+
+    case get_in(manifest, template_spec_path) do
+      nil ->
+        manifest
+
+      pod_spec ->
+        cleaned_pod_spec =
+          pod_spec
+          |> Map.drop([
+            "dnsPolicy",
+            "restartPolicy",
+            "schedulerName",
+            "securityContext",
+            "terminationGracePeriodSeconds"
+          ])
+          |> strip_container_defaults()
+
+        put_in(manifest, template_spec_path, cleaned_pod_spec)
+    end
+  end
+
+  defp strip_container_defaults(pod_spec) do
+    case Map.get(pod_spec, "containers") do
+      nil ->
+        pod_spec
+
+      containers ->
+        cleaned_containers =
+          Enum.map(containers, fn container ->
+            container
+            |> Map.drop(["terminationMessagePath", "terminationMessagePolicy"])
+            |> strip_probe_defaults("livenessProbe")
+            |> strip_probe_defaults("readinessProbe")
+            |> normalize_cpu_values()
+          end)
+
+        Map.put(pod_spec, "containers", cleaned_containers)
+    end
+  end
+
+  defp strip_probe_defaults(container, probe_key) do
+    case Map.get(container, probe_key) do
+      nil ->
+        container
+
+      probe ->
+        cleaned_probe =
+          Map.drop(probe, ["failureThreshold", "periodSeconds", "successThreshold"])
+
+        Map.put(container, probe_key, cleaned_probe)
+    end
+  end
+
+  # Normalize CPU values (2000m == 2)
+  defp normalize_cpu_values(container) do
+    case get_in(container, ["resources", "limits", "cpu"]) do
+      cpu when is_binary(cpu) ->
+        normalized = normalize_cpu(cpu)
+        put_in(container, ["resources", "limits", "cpu"], normalized)
+
+      _ ->
+        container
+    end
+  end
+
+  defp normalize_cpu(cpu) do
+    if String.ends_with?(cpu, "m") do
+      millicores = String.trim_trailing(cpu, "m") |> String.to_integer()
+
+      if rem(millicores, 1000) == 0 do
+        Integer.to_string(div(millicores, 1000))
+      else
+        cpu
+      end
+    else
+      cpu
+    end
   end
 
   @doc """

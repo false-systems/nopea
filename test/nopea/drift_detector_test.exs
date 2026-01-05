@@ -23,7 +23,7 @@ defmodule Nopea.DriftDetectorTest do
 
   describe "detect_drift_with_cluster/3" do
     test "returns :no_drift when all states match" do
-      manifest = deployment_manifest("my-app", replicas: 3)
+      manifest = deployment_manifest("my-app", image_tag: "v1")
 
       # All three states are identical
       result = Drift.detect_drift_with_cluster(manifest, manifest, manifest)
@@ -32,9 +32,9 @@ defmodule Nopea.DriftDetectorTest do
     end
 
     test "detects git_change when desired differs from last_applied" do
-      last_applied = deployment_manifest("my-app", replicas: 3)
-      desired = deployment_manifest("my-app", replicas: 5)
-      live = deployment_manifest("my-app", replicas: 3)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
+      desired = deployment_manifest("my-app", image_tag: "v2")
+      live = deployment_manifest("my-app", image_tag: "v1")
 
       result = Drift.detect_drift_with_cluster(last_applied, desired, live)
 
@@ -42,10 +42,10 @@ defmodule Nopea.DriftDetectorTest do
     end
 
     test "detects manual_drift when live differs from last_applied" do
-      last_applied = deployment_manifest("my-app", replicas: 3)
-      desired = deployment_manifest("my-app", replicas: 3)
-      # Someone kubectl scaled to 5 replicas
-      live = deployment_manifest("my-app", replicas: 5)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
+      desired = deployment_manifest("my-app", image_tag: "v1")
+      # Someone kubectl set image to v2
+      live = deployment_manifest("my-app", image_tag: "v2")
 
       result = Drift.detect_drift_with_cluster(last_applied, desired, live)
 
@@ -53,11 +53,11 @@ defmodule Nopea.DriftDetectorTest do
     end
 
     test "detects conflict when both git and cluster changed" do
-      last_applied = deployment_manifest("my-app", replicas: 3)
-      # Git changed to 5
-      desired = deployment_manifest("my-app", replicas: 5)
-      # Someone kubectl scaled to 10
-      live = deployment_manifest("my-app", replicas: 10)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
+      # Git changed to v2
+      desired = deployment_manifest("my-app", image_tag: "v2")
+      # Someone kubectl set image to v3
+      live = deployment_manifest("my-app", image_tag: "v3")
 
       result = Drift.detect_drift_with_cluster(last_applied, desired, live)
 
@@ -65,12 +65,12 @@ defmodule Nopea.DriftDetectorTest do
     end
 
     test "ignores K8s-managed fields in live state" do
-      last_applied = deployment_manifest("my-app", replicas: 3)
-      desired = deployment_manifest("my-app", replicas: 3)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       # Live has K8s-added fields but same spec
       live =
-        deployment_manifest("my-app", replicas: 3)
+        deployment_manifest("my-app", image_tag: "v1")
         |> put_in(["metadata", "resourceVersion"], "12345")
         |> put_in(["metadata", "uid"], "abc-123-def")
         |> Map.put("status", %{"availableReplicas" => 3})
@@ -87,15 +87,15 @@ defmodule Nopea.DriftDetectorTest do
       resource_key = "Deployment/default/my-app"
 
       # Set up last_applied in cache
-      last_applied = deployment_manifest("my-app", replicas: 3)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
       Cache.put_last_applied(repo_name, resource_key, Drift.normalize(last_applied))
 
       # Desired is same as last_applied (no git change)
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       # Mock K8s to return live state with manual change
       live =
-        deployment_manifest("my-app", replicas: 5)
+        deployment_manifest("my-app", image_tag: "v2")
         |> put_in(["metadata", "resourceVersion"], "99999")
 
       Nopea.K8sMock
@@ -111,7 +111,7 @@ defmodule Nopea.DriftDetectorTest do
 
     test "returns :new_resource when not in cache" do
       repo_name = "test-repo-#{:rand.uniform(1000)}"
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       # No last_applied in cache, K8s returns not found
       Nopea.K8sMock
@@ -126,10 +126,10 @@ defmodule Nopea.DriftDetectorTest do
 
     test "returns :needs_apply when in cluster but not in cache" do
       repo_name = "test-repo-#{:rand.uniform(1000)}"
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       # Not in cache, but exists in cluster
-      live = deployment_manifest("my-app", replicas: 3)
+      live = deployment_manifest("my-app", image_tag: "v1")
 
       Nopea.K8sMock
       |> expect(:get_resource, fn "apps/v1", "Deployment", "my-app", "default" ->
@@ -150,15 +150,15 @@ defmodule Nopea.DriftDetectorTest do
       resource_key = "Deployment/default/my-app"
 
       # Set up last_applied in cache
-      last_applied = deployment_manifest("my-app", replicas: 3)
+      last_applied = deployment_manifest("my-app", image_tag: "v1")
       Cache.put_last_applied(repo_name, resource_key, Drift.normalize(last_applied))
 
       # Desired is same as last_applied (no git change)
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       # Mock K8s to return live state with manual change
       live =
-        deployment_manifest("my-app", replicas: 5)
+        deployment_manifest("my-app", image_tag: "v2")
         |> put_in(["metadata", "resourceVersion"], "99999")
 
       Nopea.K8sMock
@@ -174,7 +174,7 @@ defmodule Nopea.DriftDetectorTest do
 
     test "returns nil live for new resources" do
       repo_name = "test-repo-#{:rand.uniform(1000)}"
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
       Nopea.K8sMock
       |> expect(:get_resource, fn "apps/v1", "Deployment", "my-app", "default" ->
@@ -188,9 +188,9 @@ defmodule Nopea.DriftDetectorTest do
 
     test "returns live for needs_apply case" do
       repo_name = "test-repo-#{:rand.uniform(1000)}"
-      desired = deployment_manifest("my-app", replicas: 3)
+      desired = deployment_manifest("my-app", image_tag: "v1")
 
-      live = deployment_manifest("my-app", replicas: 3)
+      live = deployment_manifest("my-app", image_tag: "v1")
 
       Nopea.K8sMock
       |> expect(:get_resource, fn "apps/v1", "Deployment", "my-app", "default" ->
@@ -205,7 +205,8 @@ defmodule Nopea.DriftDetectorTest do
 
   # Helper to create a Deployment manifest
   defp deployment_manifest(name, opts) do
-    replicas = Keyword.get(opts, :replicas, 1)
+    # Use image_tag for drift detection since replicas is stripped (managed by HPA)
+    image_tag = Keyword.get(opts, :image_tag, "latest")
 
     %{
       "apiVersion" => "apps/v1",
@@ -215,7 +216,6 @@ defmodule Nopea.DriftDetectorTest do
         "namespace" => "default"
       },
       "spec" => %{
-        "replicas" => replicas,
         "selector" => %{
           "matchLabels" => %{"app" => name}
         },
@@ -223,7 +223,7 @@ defmodule Nopea.DriftDetectorTest do
           "metadata" => %{"labels" => %{"app" => name}},
           "spec" => %{
             "containers" => [
-              %{"name" => name, "image" => "#{name}:latest"}
+              %{"name" => name, "image" => "#{name}:#{image_tag}"}
             ]
           }
         }

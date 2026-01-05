@@ -89,7 +89,7 @@ defmodule Nopea.DriftTest do
         "apiVersion" => "apps/v1",
         "kind" => "Deployment",
         "metadata" => %{"name" => "my-app"},
-        "spec" => %{"replicas" => 3},
+        "spec" => %{"replicas" => 3, "selector" => %{"matchLabels" => %{"app" => "my-app"}}},
         "status" => %{
           "availableReplicas" => 3,
           "readyReplicas" => 3,
@@ -100,7 +100,9 @@ defmodule Nopea.DriftTest do
       normalized = Drift.normalize(manifest)
 
       refute Map.has_key?(normalized, "status")
-      assert normalized["spec"]["replicas"] == 3
+      # replicas is stripped from Deployments (managed by HPA)
+      refute Map.has_key?(normalized["spec"], "replicas")
+      assert normalized["spec"]["selector"] == %{"matchLabels" => %{"app" => "my-app"}}
     end
 
     test "strips kubectl last-applied-configuration annotation" do
@@ -151,9 +153,12 @@ defmodule Nopea.DriftTest do
       assert normalized["apiVersion"] == "apps/v1"
       assert normalized["kind"] == "Deployment"
       assert normalized["metadata"]["name"] == "my-app"
-      assert normalized["metadata"]["namespace"] == "production"
+      # namespace is stripped to avoid false drift from git vs live differences
+      refute Map.has_key?(normalized["metadata"], "namespace")
       assert normalized["metadata"]["labels"] == %{"app" => "my-app"}
-      assert normalized["spec"]["replicas"] == 3
+      # replicas is stripped from Deployments (managed by HPA/controllers)
+      refute Map.has_key?(normalized["spec"], "replicas")
+      assert normalized["spec"]["selector"] == %{"matchLabels" => %{"app" => "my-app"}}
       refute Map.has_key?(normalized, "status")
       refute Map.has_key?(normalized["metadata"], "resourceVersion")
     end

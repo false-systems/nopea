@@ -87,10 +87,11 @@ defmodule Nopea.Applier do
 
   @doc """
   Applies a list of manifests to the K8s cluster.
-  Returns {:ok, count} on success or {:error, reason} on failure.
+  Returns {:ok, applied_resources} on success or {:error, reason} on failure.
+  The applied_resources contain K8s defaults and should be used for caching.
   """
-  @spec apply_manifests([map()], K8s.Conn.t(), String.t()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
+  @spec apply_manifests([map()], K8s.Conn.t(), String.t() | nil) ::
+          {:ok, [map()]} | {:error, term()}
   def apply_manifests(manifests, conn, target_namespace) do
     Logger.info("Applying #{length(manifests)} manifests to namespace: #{target_namespace}")
 
@@ -103,7 +104,8 @@ defmodule Nopea.Applier do
     errors = Enum.filter(results, &match?({:error, _}, &1))
 
     if Enum.empty?(errors) do
-      {:ok, length(manifests)}
+      applied = Enum.map(results, fn {:ok, resource} -> resource end)
+      {:ok, applied}
     else
       {:error, {:apply_failed, errors}}
     end
@@ -111,8 +113,9 @@ defmodule Nopea.Applier do
 
   @doc """
   Applies a single manifest to the cluster using server-side apply.
+  Returns the actual applied resource (with K8s defaults populated).
   """
-  @spec apply_single(map(), K8s.Conn.t(), String.t()) :: :ok | {:error, term()}
+  @spec apply_single(map(), K8s.Conn.t(), String.t() | nil) :: {:ok, map()} | {:error, term()}
   def apply_single(manifest, conn, target_namespace) do
     # Validate first
     with :ok <- validate_manifest(manifest) do
@@ -131,9 +134,10 @@ defmodule Nopea.Applier do
       operation = K8s.Client.apply(manifest, field_manager: "nopea", force: true)
 
       case K8s.Client.run(conn, operation) do
-        {:ok, _result} ->
+        {:ok, result} ->
           Logger.info("Applied: #{key}")
-          :ok
+          # Return the actual applied resource (includes K8s defaults)
+          {:ok, result}
 
         {:error, reason} = error ->
           Logger.error("Failed to apply #{key}: #{inspect(reason)}")

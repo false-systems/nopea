@@ -265,10 +265,10 @@ defmodule Nopea.Worker do
       Logger.info("Found #{length(manifests)} manifests in #{manifest_path}")
 
       case K8s.apply_manifests(manifests, config.target_namespace) do
-        {:ok, count} ->
-          # Store last-applied manifests for drift detection
-          store_last_applied(config.name, manifests)
-          {:ok, count}
+        {:ok, applied_resources} ->
+          # Store the actual applied resources (with K8s defaults) for accurate drift detection
+          store_last_applied(config.name, applied_resources)
+          {:ok, length(applied_resources)}
 
         error ->
           error
@@ -276,12 +276,13 @@ defmodule Nopea.Worker do
     end
   end
 
-  # Store normalized manifests for drift detection
-  defp store_last_applied(repo_name, manifests) do
+  # Store normalized applied resources for drift detection
+  # Uses the actual K8s response (with defaults) rather than git manifests
+  defp store_last_applied(repo_name, applied_resources) do
     if Cache.available?() do
-      Enum.each(manifests, fn manifest ->
-        resource_key = Applier.resource_key(manifest)
-        normalized = Drift.normalize(manifest)
+      Enum.each(applied_resources, fn resource ->
+        resource_key = Applier.resource_key(resource)
+        normalized = Drift.normalize(resource)
         Cache.put_last_applied(repo_name, resource_key, normalized)
       end)
     end
@@ -346,10 +347,11 @@ defmodule Nopea.Worker do
     manifests_to_apply = Enum.map(to_heal, fn {manifest, _type, _live} -> manifest end)
 
     case K8s.apply_manifests(manifests_to_apply, config.target_namespace) do
-      {:ok, count} ->
-        store_last_applied(config.name, manifests_to_apply)
+      {:ok, applied_resources} ->
+        # Store the actual applied resources (with K8s defaults)
+        store_last_applied(config.name, applied_resources)
         clear_healed_drift_timestamps(config.name, to_heal)
-        {:ok, length(to_heal), count}
+        {:ok, length(to_heal), length(applied_resources)}
 
       {:error, _} = error ->
         error
@@ -373,9 +375,11 @@ defmodule Nopea.Worker do
   end
 
   defp classify_manifest_drift(repo_name, manifest, {apply_acc, unchanged_acc}) do
-    case Drift.check_manifest_drift_with_live(repo_name, manifest) do
+    resource_key = Applier.resource_key(manifest)
+    result = Drift.check_manifest_drift_with_live(repo_name, manifest)
+
+    case result do
       {:no_drift, _live} ->
-        resource_key = Applier.resource_key(manifest)
         clear_drift_timestamp(repo_name, resource_key)
         {apply_acc, [manifest | unchanged_acc]}
 

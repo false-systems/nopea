@@ -199,8 +199,9 @@ defmodule Nopea.K8s do
 
   @doc """
   Applies multiple manifests to the cluster.
+  Returns the actual applied resources (with K8s defaults).
   """
-  @spec apply_manifests([map()], String.t() | nil) :: {:ok, non_neg_integer()} | {:error, term()}
+  @spec apply_manifests([map()], String.t() | nil) :: {:ok, [map()]} | {:error, term()}
   def apply_manifests(manifests, target_namespace \\ nil) do
     with {:ok, conn} <- conn() do
       Nopea.Applier.apply_manifests(manifests, conn, target_namespace)
