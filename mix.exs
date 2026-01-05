@@ -25,6 +25,10 @@ defmodule Nopea.MixProject do
       # K8s client
       {:k8s, "~> 2.6"},
 
+      # Distributed Erlang clustering
+      {:libcluster, "~> 3.3"},
+      {:horde, "~> 0.9"},
+
       # YAML parsing
       {:yaml_elixir, "~> 2.9"},
 
