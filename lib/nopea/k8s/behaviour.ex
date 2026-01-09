@@ -19,4 +19,10 @@ defmodule Nopea.K8s.Behaviour do
               name :: String.t(),
               namespace :: String.t()
             ) :: {:ok, map()} | {:error, term()}
+
+  @doc """
+  Gets a GitRepository resource by name and namespace.
+  """
+  @callback get_git_repository(name :: String.t(), namespace :: String.t()) ::
+              {:ok, map()} | {:error, term()}
 end

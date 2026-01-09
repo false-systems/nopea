@@ -159,6 +159,7 @@ defmodule Nopea.K8s do
   @doc """
   Gets a single GitRepository resource.
   """
+  @impl true
   @spec get_git_repository(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def get_git_repository(name, namespace) do
     with {:ok, conn} <- conn() do

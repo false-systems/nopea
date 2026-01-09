@@ -104,11 +104,20 @@ defmodule Nopea.ClusterModeTest do
       # Ensure cluster mode is disabled
       Application.put_env(:nopea, :cluster_enabled, false)
 
-      # Start local registry
-      case Registry.start_link(keys: :unique, name: Nopea.Registry) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+      # Stop any existing Nopea.Registry to avoid conflicts
+      if pid = Process.whereis(Nopea.Registry) do
+        try do
+          GenServer.stop(pid, :normal, 100)
+        catch
+          :exit, _ -> :ok
+        end
+
+        # Wait for process to fully terminate
+        Process.sleep(10)
       end
+
+      # Start fresh registry with start_supervised for proper cleanup
+      start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
 
       :ok
     end

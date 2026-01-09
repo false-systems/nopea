@@ -103,16 +103,93 @@ defmodule Nopea.Worker do
   def init(config) do
     Logger.info("Worker starting for repo: #{config.name}")
 
-    state = %__MODULE__{
-      config: config,
-      status: :initializing
-    }
+    # Fetch fresh config from K8s CRD (source of truth)
+    # This prevents stale config from Horde CRDT sync during rolling updates
+    case fetch_fresh_config(config.name, config.namespace) do
+      {:ok, fresh_config} ->
+        state = %__MODULE__{
+          config: fresh_config,
+          status: :initializing
+        }
 
-    # Schedule initial sync
-    send(self(), :startup_sync)
+        # Schedule initial sync
+        send(self(), :startup_sync)
 
-    {:ok, state}
+        {:ok, state}
+
+      {:error, :not_found} ->
+        Logger.warning(
+          "GitRepository #{config.namespace}/#{config.name} not found, stopping worker"
+        )
+
+        {:stop, :normal}
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to fetch GitRepository #{config.namespace}/#{config.name}: #{inspect(reason)}"
+        )
+
+        {:stop, {:error, reason}}
+    end
   end
+
+  # Fetch fresh config from K8s CRD
+  defp fetch_fresh_config(name, namespace) do
+    k8s_module = Application.get_env(:nopea, :k8s_module, Nopea.K8s)
+
+    case k8s_module.get_git_repository(name, namespace) do
+      {:ok, resource} ->
+        {:ok, build_config_from_resource(resource)}
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+
+      {:error, %{reason: "NotFound"}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Build worker config from GitRepository CRD resource
+  defp build_config_from_resource(resource) do
+    name = get_in(resource, ["metadata", "name"])
+    namespace = get_in(resource, ["metadata", "namespace"])
+    spec = Map.get(resource, "spec", %{})
+
+    %{
+      name: name,
+      namespace: namespace,
+      url: Map.get(spec, "url"),
+      branch: Map.get(spec, "branch", "main"),
+      path: Map.get(spec, "path"),
+      target_namespace: Map.get(spec, "targetNamespace", namespace),
+      interval: parse_interval(Map.get(spec, "interval", "5m")),
+      suspend: Map.get(spec, "suspend", false),
+      heal_policy: parse_heal_policy(Map.get(spec, "healPolicy", "auto")),
+      heal_grace_period: parse_interval(Map.get(spec, "healGracePeriod"))
+    }
+  end
+
+  # Parse duration strings like "5m", "1h", "30s"
+  defp parse_interval(interval) when is_binary(interval) do
+    case Regex.run(~r/^(\d+)(s|m|h)$/, interval) do
+      [_, num, "s"] -> String.to_integer(num) * 1_000
+      [_, num, "m"] -> String.to_integer(num) * 60 * 1_000
+      [_, num, "h"] -> String.to_integer(num) * 60 * 60 * 1_000
+      _ -> 5 * 60 * 1_000
+    end
+  end
+
+  defp parse_interval(interval) when is_integer(interval), do: interval * 1_000
+  defp parse_interval(nil), do: nil
+  defp parse_interval(_), do: 5 * 60 * 1_000
+
+  defp parse_heal_policy("auto"), do: :auto
+  defp parse_heal_policy("manual"), do: :manual
+  defp parse_heal_policy("notify"), do: :notify
+  defp parse_heal_policy(_), do: :auto
 
   @impl true
   def handle_call(:get_state, _from, state) do
