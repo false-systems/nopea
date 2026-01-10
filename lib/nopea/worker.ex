@@ -103,15 +103,55 @@ defmodule Nopea.Worker do
   def init(config) do
     Logger.info("Worker starting for repo: #{config.name}")
 
-    state = %__MODULE__{
-      config: config,
-      status: :initializing
-    }
+    # Fetch fresh config from K8s CRD (source of truth)
+    # This prevents stale config from Horde CRDT sync during rolling updates
+    case fetch_fresh_config(config.name, config.namespace) do
+      {:ok, fresh_config} ->
+        state = %__MODULE__{
+          config: fresh_config,
+          status: :initializing
+        }
 
-    # Schedule initial sync
-    send(self(), :startup_sync)
+        # Schedule initial sync
+        send(self(), :startup_sync)
 
-    {:ok, state}
+        {:ok, state}
+
+      {:error, :not_found} ->
+        Logger.warning(
+          "GitRepository #{config.namespace}/#{config.name} not found, stopping worker"
+        )
+
+        {:stop, :normal}
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to fetch GitRepository #{config.namespace}/#{config.name}: #{inspect(reason)}"
+        )
+
+        {:stop, reason}
+    end
+  end
+
+  # Fetch fresh config from K8s CRD
+  defp fetch_fresh_config(name, namespace) do
+    alias Nopea.GitRepository.Parser
+
+    k8s_module = Application.get_env(:nopea, :k8s_module, Nopea.K8s)
+
+    case k8s_module.get_git_repository(name, namespace) do
+      {:ok, resource} ->
+        {:ok, Parser.build_config(resource)}
+
+      {:error, :not_found} ->
+        {:error, :not_found}
+
+      {:error, %{__struct__: :"Elixir.K8s.Client.APIError", reason: "NotFound"}} ->
+        {:error, :not_found}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @impl true
