@@ -14,9 +14,6 @@ pub enum GitError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("repository not found at {0}")]
-    RepoNotFound(String),
-
     #[error("branch '{0}' not found")]
     BranchNotFound(String),
 
