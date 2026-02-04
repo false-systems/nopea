@@ -25,6 +25,7 @@ defmodule Nopea.Git do
   Sync a repository: clone if not exists, fetch+reset if exists.
   Returns {:ok, commit_sha} or {:error, reason}.
   """
+  @impl true
   @spec sync(String.t(), String.t(), String.t(), integer()) ::
           {:ok, String.t()} | {:error, String.t()}
   def sync(url, branch, path, depth \\ 1) do
@@ -35,6 +36,7 @@ defmodule Nopea.Git do
   List YAML files in a directory.
   Returns {:ok, [filename]} or {:error, reason}.
   """
+  @impl true
   @spec files(String.t(), String.t() | nil) ::
           {:ok, [String.t()]} | {:error, String.t()}
   def files(path, subpath \\ nil) do
@@ -46,6 +48,7 @@ defmodule Nopea.Git do
   Returns {:ok, content} or {:error, reason}.
   Content is the raw binary (base64 decoded).
   """
+  @impl true
   @spec read(String.t(), String.t()) ::
           {:ok, binary()} | {:error, String.t()}
   def read(path, file) do
@@ -65,6 +68,7 @@ defmodule Nopea.Git do
   Get HEAD commit information.
   Returns {:ok, commit_info} or {:error, reason}.
   """
+  @impl true
   @spec head(String.t()) :: {:ok, commit_info()} | {:error, String.t()}
   def head(path) do
     GenServer.call(__MODULE__, {:head, path}, @timeout)
@@ -82,6 +86,7 @@ defmodule Nopea.Git do
 
   Returns `{:ok, sha}` or `{:error, reason}`.
   """
+  @impl true
   @spec checkout(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def checkout(path, sha) do
     GenServer.call(__MODULE__, {:checkout, path, sha}, @timeout)
@@ -92,6 +97,7 @@ defmodule Nopea.Git do
   Useful for cheap polling to detect new commits.
   Returns {:ok, sha} or {:error, reason}.
   """
+  @impl true
   @spec ls_remote(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def ls_remote(url, branch) do
     GenServer.call(__MODULE__, {:ls_remote, url, branch}, @timeout)
@@ -291,6 +297,7 @@ defmodule Nopea.Git do
   @doc """
   Decode base64 content from a read operation.
   """
+  @impl true
   @spec decode_content(String.t()) :: {:ok, binary()} | {:error, :invalid_base64}
   def decode_content(base64_content) do
     case Base.decode64(base64_content) do

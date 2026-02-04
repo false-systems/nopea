@@ -253,6 +253,7 @@ defmodule Nopea.Worker do
   defp do_sync(state) do
     config = state.config
     repo_path = repo_path(config.name)
+    start_time = System.monotonic_time(:millisecond)
 
     # Emit metrics start
     metrics_start = Metrics.emit_sync_start(%{repo: config.name})
@@ -265,7 +266,8 @@ defmodule Nopea.Worker do
         handle_sync_success(state, result, metrics_start)
 
       {:error, reason} ->
-        handle_sync_failure(state, reason, metrics_start)
+        duration_ms = System.monotonic_time(:millisecond) - start_time
+        handle_sync_failure(state, reason, metrics_start, duration_ms)
     end
   end
 
@@ -308,14 +310,14 @@ defmodule Nopea.Worker do
     {:ok, new_state}
   end
 
-  defp handle_sync_failure(state, reason, metrics_start) do
+  defp handle_sync_failure(state, reason, metrics_start, duration_ms) do
     config = state.config
 
     Logger.error("Sync failed for #{config.name}: #{inspect(reason)}")
     update_crd_status(state, :failed, "Sync failed: #{inspect(reason)}")
 
-    # Emit failure CDEvent (estimate duration since we don't have it from Executor on failure)
-    emit_failure_event(state, reason, 0)
+    # Emit failure CDEvent with actual duration
+    emit_failure_event(state, reason, duration_ms)
 
     # Emit metrics failure
     Metrics.emit_sync_error(metrics_start, %{repo: config.name, error: error_type(reason)})
