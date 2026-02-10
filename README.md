@@ -1,12 +1,12 @@
 # NOPEA
 
-**Lightweight GitOps Controller - Learning Project**
+**Lightweight GitOps Controller**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/elixir-1.16%2B-purple.svg)](https://elixir-lang.org)
 [![Tests](https://img.shields.io/badge/tests-171%20passing-green.svg)]()
 
-A GitOps controller for Kubernetes written in Elixir. Built to learn BEAM, OTP supervision trees, and GitOps patterns.
+A GitOps controller for Kubernetes written in Elixir.
 
 **This is a learning project** - I'm building it to understand:
 - How OTP supervision and GenServers work
