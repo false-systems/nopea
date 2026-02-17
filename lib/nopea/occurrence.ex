@@ -4,7 +4,7 @@ defmodule Nopea.Occurrence do
 
   Adapts the SYKLI occurrence format for deployments:
   - **Error block** — what_failed, why_it_matters, possible_causes
-  - **Reasoning block** — summary + memory context from KERTO graph
+  - **Reasoning block** — summary + memory context from knowledge graph
   - **History block** — deployment steps with outcomes
   - **Deploy data** — service, namespace, strategy, manifests, duration
 
@@ -20,7 +20,7 @@ defmodule Nopea.Occurrence do
   @doc """
   Builds a FALSE Protocol occurrence from a deploy result.
 
-  Optional second argument provides memory context from the KERTO graph
+  Optional second argument provides memory context from the knowledge graph
   to enrich the reasoning block.
   """
   @spec build(map(), map() | nil) :: map()

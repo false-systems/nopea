@@ -1,7 +1,7 @@
 defmodule Nopea.Memory.IngestorTest do
   use ExUnit.Case, async: true
 
-  alias Kerto.Graph.{Graph, Identity}
+  alias Nopea.Graph.{Graph, Identity}
   alias Nopea.Memory.Ingestor
 
   describe "ingest/2 with successful deploy" do

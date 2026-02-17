@@ -20,10 +20,10 @@ defmodule Nopea.ApplicationTest do
       start_supervised!(Nopea.Cache)
 
       # Store a graph snapshot in cache
-      graph = Kerto.Graph.Graph.new()
+      graph = Nopea.Graph.Graph.new()
 
       {graph, _node} =
-        Kerto.Graph.Graph.upsert_node(graph, :concept, "test-svc", 0.9, "test-ulid")
+        Nopea.Graph.Graph.upsert_node(graph, :concept, "test-svc", 0.9, "test-ulid")
 
       binary = :erlang.term_to_binary(graph)
       Nopea.Cache.put_graph_snapshot(binary)
