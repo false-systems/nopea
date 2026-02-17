@@ -8,6 +8,7 @@ defmodule Nopea.Application do
   - Nopea.Memory (Kerto knowledge graph)
   - Nopea.Cache (ETS storage)
   - Nopea.Registry or Nopea.DistributedRegistry (cluster mode)
+  - Nopea.ServiceAgent.Supervisor (DynamicSupervisor for per-service agents)
   - Nopea.Deploy.Supervisor (DynamicSupervisor for deploy workers)
   - Nopea.Cluster (libcluster, optional)
   - Nopea.DistributedSupervisor (Horde, optional)
@@ -28,6 +29,7 @@ defmodule Nopea.Application do
       |> add_memory_child()
       |> add_cluster_child(cluster_enabled)
       |> add_registry_child(cluster_enabled)
+      |> add_service_agent_child()
       |> add_deploy_supervisor_child(cluster_enabled)
       |> add_router_child()
 
@@ -79,6 +81,12 @@ defmodule Nopea.Application do
     else
       children
     end
+  end
+
+  defp add_service_agent_child(children) do
+    if Application.get_env(:nopea, :enable_deploy_supervisor, true),
+      do: children ++ [Nopea.ServiceAgent.Supervisor],
+      else: children
   end
 
   defp add_deploy_supervisor_child(children, cluster_enabled) do
