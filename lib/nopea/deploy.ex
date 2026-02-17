@@ -92,7 +92,15 @@ defmodule Nopea.Deploy do
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
   defp execute_strategy(:canary, spec), do: Nopea.Strategy.Canary.execute(spec)
   defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
-  defp execute_strategy(_, spec), do: Nopea.Strategy.Direct.execute(spec)
+
+  defp execute_strategy(unknown, spec) do
+    Logger.warning("Unknown strategy #{inspect(unknown)}, falling back to direct",
+      service: spec.service,
+      strategy: unknown
+    )
+
+    Nopea.Strategy.Direct.execute(spec)
+  end
 
   defp verify_deploy(spec, applied) when is_list(applied) do
     Enum.all?(applied, fn manifest ->
@@ -103,7 +111,14 @@ defmodule Nopea.Deploy do
       end
     end)
   rescue
-    _ -> false
+    error ->
+      Logger.warning("Post-deploy verification failed",
+        service: spec.service,
+        error: inspect(error),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      false
   end
 
   defp verify_deploy(_spec, _applied), do: false
@@ -161,7 +176,12 @@ defmodule Nopea.Deploy do
     Nopea.Occurrence.persist(occurrence, workdir)
   rescue
     error ->
-      Logger.warning("Failed to generate occurrence: #{inspect(error)}")
+      Logger.error("Failed to generate occurrence",
+        service: result.service,
+        deploy_id: result.deploy_id,
+        error: inspect(error),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
   end
 
   defp emit_start(spec, deploy_id, strategy) do

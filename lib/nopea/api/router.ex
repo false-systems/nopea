@@ -6,6 +6,7 @@ defmodule Nopea.API.Router do
   """
 
   use Plug.Router
+  require Logger
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -87,7 +88,12 @@ defmodule Nopea.API.Router do
     end
   rescue
     e ->
-      json(conn, 500, %{error: Exception.message(e)})
+      Logger.error("Deploy request failed",
+        error: Exception.message(e),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      json(conn, 500, %{error: "Internal server error"})
   end
 
   defp json(conn, status, body) do

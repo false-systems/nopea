@@ -207,7 +207,14 @@ defmodule Nopea.MCP do
       {:ok, Jason.encode!(Nopea.Helpers.serialize_deploy_result(result), pretty: true)}
     end
   rescue
-    e -> {:error, "Deploy failed: #{Exception.message(e)}"}
+    e ->
+      Logger.error("MCP deploy tool failed",
+        service: args["service"],
+        error: Exception.message(e),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      {:error, "Deploy failed: #{Exception.message(e)}"}
   end
 
   defp call_tool("nopea_explain", args) do

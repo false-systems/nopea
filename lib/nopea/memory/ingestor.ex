@@ -6,6 +6,8 @@ defmodule Nopea.Memory.Ingestor do
   graph nodes and relationships that build deployment memory.
   """
 
+  require Logger
+
   alias Kerto.Graph.Graph
 
   @spec ingest(Graph.t(), map()) :: Graph.t()
@@ -43,7 +45,15 @@ defmodule Nopea.Memory.Ingestor do
     graph
   end
 
-  def ingest(graph, _unknown), do: graph
+  def ingest(graph, unknown) when is_map(unknown) do
+    Logger.warning("Unrecognized deploy result format", keys: Map.keys(unknown))
+    graph
+  end
+
+  def ingest(graph, _unknown) do
+    Logger.warning("Unrecognized deploy result: not a map")
+    graph
+  end
 
   defp maybe_record_failure(graph, %{status: :failed, error: error, service: service}, ulid)
        when not is_nil(error) do

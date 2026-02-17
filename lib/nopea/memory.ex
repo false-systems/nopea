@@ -86,9 +86,19 @@ defmodule Nopea.Memory do
 
   @impl true
   def handle_cast({:record_deploy, deploy_result}, state) do
-    graph = Nopea.Memory.Ingestor.ingest(state.graph, deploy_result)
-    snapshot_graph(graph)
-    {:noreply, %{state | graph: graph}}
+    try do
+      graph = Nopea.Memory.Ingestor.ingest(state.graph, deploy_result)
+      snapshot_graph(graph)
+      {:noreply, %{state | graph: graph}}
+    rescue
+      error ->
+        Logger.error("Ingestor failed, preserving existing graph state",
+          error: inspect(error),
+          stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+        )
+
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -113,7 +123,13 @@ defmodule Nopea.Memory do
         try do
           :erlang.binary_to_term(binary, [:safe])
         rescue
-          _ -> nil
+          error ->
+            Logger.warning("Failed to restore graph snapshot",
+              error: inspect(error),
+              stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+            )
+
+            nil
         end
 
       _ ->
