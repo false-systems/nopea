@@ -42,7 +42,7 @@ defmodule Nopea.Memory.IngestorTest do
       [rel] = rels
       assert rel.source == service_id
       assert rel.target == ns_id
-      assert rel.relation == :depends_on
+      assert rel.relation == :deployed_to
     end
 
     test "has 2 nodes and 1 relationship", %{graph: graph} do

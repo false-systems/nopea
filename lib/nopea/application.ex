@@ -24,8 +24,8 @@ defmodule Nopea.Application do
       [Nopea.ULID]
       |> add_metrics_child()
       |> add_cdevents_child()
-      |> add_memory_child()
       |> add_cache_child()
+      |> add_memory_child()
       |> add_cluster_child(cluster_enabled)
       |> add_registry_child(cluster_enabled)
       |> add_deploy_supervisor_child(cluster_enabled)

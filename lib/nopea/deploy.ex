@@ -50,7 +50,7 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.failure(deploy_id, spec, strategy, reason, duration_ms)
         record_outcome(result, context)
-        emit_failure(spec, deploy_id, strategy, reason, duration_ms)
+        emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time)
 
         Logger.error("Deploy failed: #{spec.service} [#{deploy_id}]: #{inspect(reason)}")
         result
@@ -98,6 +98,7 @@ defmodule Nopea.Deploy do
     Enum.all?(applied, fn manifest ->
       case Nopea.Drift.verify_manifest(spec.service, manifest) do
         :no_drift -> true
+        :new_resource -> true
         _ -> false
       end
     end)
@@ -194,8 +195,8 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms) do
-    Nopea.Metrics.emit_deploy_error(System.monotonic_time(), %{
+  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time) do
+    Nopea.Metrics.emit_deploy_error(start_time, %{
       service: spec.service,
       strategy: strategy,
       error: reason

@@ -111,7 +111,7 @@ defmodule Nopea.Memory do
     case Nopea.Cache.available?() && Nopea.Cache.get_graph_snapshot() do
       {:ok, binary} ->
         try do
-          :erlang.binary_to_term(binary)
+          :erlang.binary_to_term(binary, [:safe])
         rescue
           _ -> nil
         end

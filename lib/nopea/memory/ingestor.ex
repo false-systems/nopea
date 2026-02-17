@@ -27,7 +27,7 @@ defmodule Nopea.Memory.Ingestor do
       Graph.upsert_relationship(
         graph,
         service_id,
-        :depends_on,
+        :deployed_to,
         ns_id,
         confidence,
         ulid,

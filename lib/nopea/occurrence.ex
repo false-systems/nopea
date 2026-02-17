@@ -211,10 +211,10 @@ defmodule Nopea.Occurrence do
       "service" => result.service,
       "namespace" => result.namespace,
       "strategy" => Atom.to_string(result.strategy),
-      "manifests_applied" => result[:manifests_applied] || 0,
-      "verified" => result[:verified] || false
+      "manifests_applied" => Map.get(result, :manifests_applied, 0),
+      "verified" => Map.get(result, :verified, false)
     }
-    |> maybe_add("deploy_id", result[:deploy_id])
+    |> maybe_add("deploy_id", Map.get(result, :deploy_id))
   end
 
   # ─────────────────────────────────────────────────────────────────────────────

@@ -99,7 +99,19 @@ defmodule Nopea.CLI do
 
   defp serve(_opts) do
     IO.puts("Starting Nopea daemon...")
-    Application.put_env(:nopea, :enable_router, true)
+
+    case Supervisor.start_child(Nopea.AppSupervisor, Nopea.API.Router) do
+      {:ok, _pid} ->
+        port = Application.get_env(:nopea, :api_port, 4000)
+        IO.puts("Nopea API listening on port #{port}")
+
+      {:error, {:already_started, _pid}} ->
+        IO.puts("Nopea API already running")
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Failed to start API: #{inspect(reason)}")
+    end
+
     Process.sleep(:infinity)
   end
 
