@@ -8,8 +8,6 @@
 
 Every deployment tool treats each deploy as the first deploy ever. Nopea remembers.
 
-**ArgoCD has no memory. Nopea remembers.**
-
 ---
 
 ## What Is This?
