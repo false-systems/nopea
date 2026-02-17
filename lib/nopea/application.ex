@@ -5,7 +5,7 @@ defmodule Nopea.Application do
   Supervision tree:
   - Nopea.ULID (monotonic ID generator)
   - Nopea.Events.Emitter (CDEvents HTTP emitter, optional)
-  - Nopea.Memory (Kerto knowledge graph)
+  - Nopea.Memory (knowledge graph)
   - Nopea.Cache (ETS storage)
   - Nopea.Registry or Nopea.DistributedRegistry (cluster mode)
   - Nopea.ServiceAgent.Supervisor (DynamicSupervisor for per-service agents)

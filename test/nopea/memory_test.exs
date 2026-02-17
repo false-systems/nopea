@@ -83,7 +83,7 @@ defmodule Nopea.MemoryTest do
   describe "get_graph/0" do
     test "returns the current graph state" do
       graph = Memory.get_graph()
-      assert %Kerto.Graph.Graph{} = graph
+      assert %Nopea.Graph.Graph{} = graph
       assert map_size(graph.nodes) == 0
     end
   end

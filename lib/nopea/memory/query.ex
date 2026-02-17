@@ -1,6 +1,6 @@
 defmodule Nopea.Memory.Query do
   @moduledoc """
-  Queries the KERTO knowledge graph for deployment context.
+  Queries the knowledge graph for deployment context.
 
   Provides context-aware information about services:
   - Failure rates and patterns
@@ -8,7 +8,7 @@ defmodule Nopea.Memory.Query do
   - Recommendations based on historical data
   """
 
-  alias Kerto.Graph.{Graph, Identity}
+  alias Nopea.Graph.{Graph, Identity}
 
   @spec deploy_context(Graph.t(), String.t(), String.t()) :: map()
   def deploy_context(graph, service, namespace) do
