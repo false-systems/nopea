@@ -52,31 +52,36 @@ defmodule Nopea.ServiceAgent do
 
   @spec status(String.t()) :: {:ok, map()} | {:error, :not_found}
   def status(service) do
-    case lookup(service) do
-      {:ok, pid} ->
-        {:ok, GenServer.call(pid, :status)}
-
-      :error ->
-        {:error, :not_found}
+    if registry_available?() do
+      case lookup(service) do
+        {:ok, pid} -> {:ok, GenServer.call(pid, :status)}
+        :error -> {:error, :not_found}
+      end
+    else
+      {:error, :not_found}
     end
   end
 
   @spec health() :: [map()]
   def health do
-    Registry.select(Nopea.Registry, [
-      {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
-    ])
-    |> Enum.filter(fn
-      {{:service, _name}, _pid} -> true
-      _ -> false
-    end)
-    |> Enum.map(fn {{:service, name}, pid} ->
-      try do
-        GenServer.call(pid, :status, 5_000)
-      catch
-        :exit, _ -> %{service: name, status: :unavailable}
-      end
-    end)
+    if registry_available?() do
+      Registry.select(Nopea.Registry, [
+        {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+      ])
+      |> Enum.filter(fn
+        {{:service, _name}, _pid} -> true
+        _ -> false
+      end)
+      |> Enum.map(fn {{:service, name}, pid} ->
+        try do
+          GenServer.call(pid, :status, 5_000)
+        catch
+          :exit, _ -> %{service: name, status: :unavailable}
+        end
+      end)
+    else
+      []
+    end
   end
 
   @spec ensure_started(String.t()) :: pid()
@@ -91,6 +96,10 @@ defmodule Nopea.ServiceAgent do
           {:error, {:already_started, pid}} -> pid
         end
     end
+  end
+
+  defp registry_available? do
+    Process.whereis(Nopea.Registry) != nil
   end
 
   defp lookup(service) do

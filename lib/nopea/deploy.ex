@@ -14,6 +14,20 @@ defmodule Nopea.Deploy do
 
   alias Nopea.Deploy.{Spec, Result}
 
+  @doc """
+  Deploy through ServiceAgent when available, falling back to direct execution.
+
+  This is the primary entry point for MCP and external callers.
+  """
+  @spec deploy(Spec.t()) :: Result.t()
+  def deploy(%Spec{} = spec) do
+    if Process.whereis(Nopea.ServiceAgent.Supervisor) != nil do
+      Nopea.ServiceAgent.deploy(spec.service, spec)
+    else
+      run(spec)
+    end
+  end
+
   @spec run(Spec.t()) :: Result.t()
   def run(%Spec{} = spec) do
     deploy_id = Nopea.Helpers.generate_ulid()
