@@ -8,9 +8,12 @@ erl_crash.dump
 *.ez
 nopea-*.tar
 
-# Rust
-nopea-git/target/
-nopea-git/Cargo.lock
+# Escript binary
+/nopea
+
+# Runtime artifacts
+.nopea/
+.sykli/
 
 # IDE
 .idea/

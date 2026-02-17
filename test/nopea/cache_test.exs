@@ -8,207 +8,98 @@ defmodule Nopea.CacheTest do
     :ok
   end
 
-  describe "commits cache" do
-    test "stores and retrieves commit for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      commit = "abc123def456"
+  describe "deployments" do
+    test "stores and retrieves deployment" do
+      service = "auth-svc-#{:rand.uniform(1000)}"
+      deploy_id = "01ABC"
+      data = %{status: :completed, duration_ms: 150}
 
-      :ok = Cache.put_commit(repo_name, commit)
-      assert {:ok, ^commit} = Cache.get_commit(repo_name)
+      :ok = Cache.put_deployment(service, deploy_id, data)
+      assert {:ok, ^data} = Cache.get_deployment(service, deploy_id)
     end
 
-    test "returns error for unknown repo" do
-      assert {:error, :not_found} = Cache.get_commit("unknown-repo")
+    test "returns error for unknown deployment" do
+      assert {:error, :not_found} = Cache.get_deployment("unknown", "unknown")
     end
 
-    test "updates existing commit" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
+    test "lists all deployments for a service" do
+      service = "svc-#{:rand.uniform(1000)}"
 
-      :ok = Cache.put_commit(repo_name, "commit1")
-      :ok = Cache.put_commit(repo_name, "commit2")
+      :ok = Cache.put_deployment(service, "deploy-1", %{status: :completed})
+      :ok = Cache.put_deployment(service, "deploy-2", %{status: :failed})
 
-      assert {:ok, "commit2"} = Cache.get_commit(repo_name)
-    end
-
-    test "deletes commit" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-
-      :ok = Cache.put_commit(repo_name, "abc123")
-      :ok = Cache.delete_commit(repo_name)
-
-      assert {:error, :not_found} = Cache.get_commit(repo_name)
+      deploys = Cache.list_deployments(service)
+      assert length(deploys) == 2
     end
   end
 
-  describe "resource hash cache" do
-    test "stores and retrieves resource hash" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "Deployment/default/my-app"
-      hash = "sha256:abcdef123456"
+  describe "service state" do
+    test "stores and retrieves service state" do
+      service = "svc-#{:rand.uniform(1000)}"
+      state = %{status: :completed, last_deploy: "01ABC"}
 
-      :ok = Cache.put_resource_hash(repo_name, resource_key, hash)
-      assert {:ok, ^hash} = Cache.get_resource_hash(repo_name, resource_key)
+      :ok = Cache.put_service_state(service, state)
+      assert {:ok, ^state} = Cache.get_service_state(service)
     end
 
-    test "returns error for unknown resource" do
-      assert {:error, :not_found} = Cache.get_resource_hash("repo", "unknown")
+    test "returns error for unknown service" do
+      assert {:error, :not_found} = Cache.get_service_state("unknown")
     end
 
-    test "lists all resource hashes for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
+    test "lists all services" do
+      svc1 = "svc-a-#{:rand.uniform(1000)}"
+      svc2 = "svc-b-#{:rand.uniform(1000)}"
 
-      :ok = Cache.put_resource_hash(repo_name, "Deployment/default/app1", "hash1")
-      :ok = Cache.put_resource_hash(repo_name, "Service/default/app1", "hash2")
+      :ok = Cache.put_service_state(svc1, %{status: :ok})
+      :ok = Cache.put_service_state(svc2, %{status: :ok})
 
-      hashes = Cache.list_resource_hashes(repo_name)
-      assert length(hashes) == 2
-      assert {"Deployment/default/app1", "hash1"} in hashes
-      assert {"Service/default/app1", "hash2"} in hashes
-    end
-
-    test "clears all resource hashes for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-
-      :ok = Cache.put_resource_hash(repo_name, "Deployment/default/app", "hash1")
-      :ok = Cache.clear_resource_hashes(repo_name)
-
-      assert Cache.list_resource_hashes(repo_name) == []
+      services = Cache.list_services()
+      assert svc1 in services
+      assert svc2 in services
     end
   end
 
-  describe "sync state cache" do
-    test "stores and retrieves sync state" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
+  describe "graph snapshot" do
+    test "stores and retrieves graph snapshot" do
+      binary = :erlang.term_to_binary(%{nodes: %{}, relationships: %{}})
 
-      state = %{
-        last_sync: DateTime.utc_now(),
-        status: :synced,
-        resources_applied: 5
-      }
-
-      :ok = Cache.put_sync_state(repo_name, state)
-      assert {:ok, retrieved} = Cache.get_sync_state(repo_name)
-      assert retrieved.status == :synced
-      assert retrieved.resources_applied == 5
+      :ok = Cache.put_graph_snapshot(binary)
+      assert {:ok, ^binary} = Cache.get_graph_snapshot()
     end
 
-    test "returns error for unknown repo sync state" do
-      assert {:error, :not_found} = Cache.get_sync_state("unknown")
+    test "returns error when no snapshot" do
+      assert {:error, :not_found} = Cache.get_graph_snapshot()
     end
   end
 
-  describe "last applied cache (for drift detection)" do
+  describe "last applied (for drift detection)" do
     test "stores and retrieves last-applied manifest" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
+      service = "svc-#{:rand.uniform(1000)}"
       resource_key = "Deployment/default/my-app"
+      manifest = %{"apiVersion" => "apps/v1", "kind" => "Deployment"}
 
-      manifest = %{
-        "apiVersion" => "apps/v1",
-        "kind" => "Deployment",
-        "metadata" => %{"name" => "my-app"},
-        "spec" => %{"replicas" => 3}
-      }
-
-      :ok = Cache.put_last_applied(repo_name, resource_key, manifest)
-      assert {:ok, ^manifest} = Cache.get_last_applied(repo_name, resource_key)
+      :ok = Cache.put_last_applied(service, resource_key, manifest)
+      assert {:ok, ^manifest} = Cache.get_last_applied(service, resource_key)
     end
 
     test "returns error for unknown resource" do
-      assert {:error, :not_found} = Cache.get_last_applied("repo", "unknown")
+      assert {:error, :not_found} = Cache.get_last_applied("svc", "unknown")
     end
 
-    test "lists all last-applied manifests for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
+    test "lists all last-applied manifests for service" do
+      service = "svc-#{:rand.uniform(1000)}"
 
-      manifest1 = %{"kind" => "Deployment", "metadata" => %{"name" => "app1"}}
-      manifest2 = %{"kind" => "Service", "metadata" => %{"name" => "app1"}}
+      :ok = Cache.put_last_applied(service, "Deployment/default/app1", %{"kind" => "Deployment"})
+      :ok = Cache.put_last_applied(service, "Service/default/app1", %{"kind" => "Service"})
 
-      :ok = Cache.put_last_applied(repo_name, "Deployment/default/app1", manifest1)
-      :ok = Cache.put_last_applied(repo_name, "Service/default/app1", manifest2)
-
-      manifests = Cache.list_last_applied(repo_name)
+      manifests = Cache.list_last_applied(service)
       assert length(manifests) == 2
-
-      keys = Enum.map(manifests, fn {key, _} -> key end)
-      assert "Deployment/default/app1" in keys
-      assert "Service/default/app1" in keys
-    end
-
-    test "clears all last-applied manifests for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-
-      :ok = Cache.put_last_applied(repo_name, "Deployment/default/app", %{"test" => true})
-      :ok = Cache.clear_last_applied(repo_name)
-
-      assert Cache.list_last_applied(repo_name) == []
-    end
-
-    test "deletes specific last-applied manifest" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "ConfigMap/default/config"
-
-      :ok = Cache.put_last_applied(repo_name, resource_key, %{"data" => %{}})
-      :ok = Cache.delete_last_applied(repo_name, resource_key)
-
-      assert {:error, :not_found} = Cache.get_last_applied(repo_name, resource_key)
-    end
-
-    test "updates existing last-applied manifest" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "Deployment/default/app"
-
-      :ok = Cache.put_last_applied(repo_name, resource_key, %{"spec" => %{"replicas" => 1}})
-      :ok = Cache.put_last_applied(repo_name, resource_key, %{"spec" => %{"replicas" => 3}})
-
-      assert {:ok, manifest} = Cache.get_last_applied(repo_name, resource_key)
-      assert manifest["spec"]["replicas"] == 3
     end
   end
 
-  describe "drift timestamps" do
-    test "records and retrieves first seen timestamp" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "Deployment/default/api"
-
-      timestamp = Cache.record_drift_first_seen(repo_name, resource_key)
-
-      assert {:ok, ^timestamp} = Cache.get_drift_first_seen(repo_name, resource_key)
-    end
-
-    test "returns same timestamp on subsequent calls" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "Deployment/default/api"
-
-      first = Cache.record_drift_first_seen(repo_name, resource_key)
-      Process.sleep(10)
-      second = Cache.record_drift_first_seen(repo_name, resource_key)
-
-      assert first == second
-    end
-
-    test "returns error for unknown resource" do
-      assert {:error, :not_found} = Cache.get_drift_first_seen("unknown", "unknown")
-    end
-
-    test "clears drift timestamp for resource" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-      resource_key = "Deployment/default/api"
-
-      Cache.record_drift_first_seen(repo_name, resource_key)
-      :ok = Cache.clear_drift_first_seen(repo_name, resource_key)
-
-      assert {:error, :not_found} = Cache.get_drift_first_seen(repo_name, resource_key)
-    end
-
-    test "clears all drift timestamps for repo" do
-      repo_name = "test-repo-#{:rand.uniform(1000)}"
-
-      Cache.record_drift_first_seen(repo_name, "Deployment/default/a")
-      Cache.record_drift_first_seen(repo_name, "Deployment/default/b")
-      :ok = Cache.clear_all_drift_timestamps(repo_name)
-
-      assert {:error, :not_found} = Cache.get_drift_first_seen(repo_name, "Deployment/default/a")
-      assert {:error, :not_found} = Cache.get_drift_first_seen(repo_name, "Deployment/default/b")
+  describe "available?/0" do
+    test "returns true when tables exist" do
+      assert Cache.available?()
     end
   end
 end

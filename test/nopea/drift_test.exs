@@ -100,7 +100,6 @@ defmodule Nopea.DriftTest do
       normalized = Drift.normalize(manifest)
 
       refute Map.has_key?(normalized, "status")
-      # replicas is stripped from Deployments (managed by HPA)
       refute Map.has_key?(normalized["spec"], "replicas")
       assert normalized["spec"]["selector"] == %{"matchLabels" => %{"app" => "my-app"}}
     end
@@ -153,10 +152,8 @@ defmodule Nopea.DriftTest do
       assert normalized["apiVersion"] == "apps/v1"
       assert normalized["kind"] == "Deployment"
       assert normalized["metadata"]["name"] == "my-app"
-      # namespace is stripped to avoid false drift from git vs live differences
       refute Map.has_key?(normalized["metadata"], "namespace")
       assert normalized["metadata"]["labels"] == %{"app" => "my-app"}
-      # replicas is stripped from Deployments (managed by HPA/controllers)
       refute Map.has_key?(normalized["spec"], "replicas")
       assert normalized["spec"]["selector"] == %{"matchLabels" => %{"app" => "my-app"}}
       refute Map.has_key?(normalized, "status")
@@ -193,7 +190,6 @@ defmodule Nopea.DriftTest do
         "data" => %{"key" => "new-value"}
       }
 
-      # Live matches last_applied (no manual changes)
       live = last_applied
 
       result = Drift.three_way_diff(last_applied, desired, live)
@@ -209,10 +205,8 @@ defmodule Nopea.DriftTest do
         "data" => %{"key" => "original"}
       }
 
-      # Desired matches last_applied (no git changes)
       desired = last_applied
 
-      # Someone manually changed it in the cluster
       live = %{
         "apiVersion" => "v1",
         "kind" => "ConfigMap",
@@ -262,7 +256,6 @@ defmodule Nopea.DriftTest do
 
       desired = last_applied
 
-      # Live has K8s-added fields but same content
       live = %{
         "apiVersion" => "v1",
         "kind" => "ConfigMap",
@@ -278,66 +271,6 @@ defmodule Nopea.DriftTest do
       result = Drift.three_way_diff(last_applied, desired, live)
 
       assert result == :no_drift
-    end
-  end
-
-  describe "git_changed?/2" do
-    test "returns false when manifests match" do
-      manifest = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{"name" => "my-config"},
-        "data" => %{"key" => "value"}
-      }
-
-      result = Drift.git_changed?(manifest, manifest)
-
-      assert result == false
-    end
-
-    test "returns {:changed, diff} when manifests differ" do
-      last_applied = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{"name" => "my-config"},
-        "data" => %{"key" => "old-value"}
-      }
-
-      desired = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{"name" => "my-config"},
-        "data" => %{"key" => "new-value"}
-      }
-
-      result = Drift.git_changed?(last_applied, desired)
-
-      assert {:changed, %{from: from_hash, to: to_hash}} = result
-      refute from_hash == to_hash
-    end
-
-    test "ignores K8s-managed fields when comparing" do
-      last_applied = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{"name" => "my-config"},
-        "data" => %{"key" => "value"}
-      }
-
-      # Same content but with K8s-added fields
-      desired = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{
-          "name" => "my-config",
-          "resourceVersion" => "12345"
-        },
-        "data" => %{"key" => "value"}
-      }
-
-      result = Drift.git_changed?(last_applied, desired)
-
-      assert result == false
     end
   end
 
@@ -368,7 +301,6 @@ defmodule Nopea.DriftTest do
     end
 
     test "normalizes before hashing" do
-      # Same content but one has K8s-added fields
       manifest1 = %{
         "apiVersion" => "v1",
         "kind" => "ConfigMap",
@@ -391,93 +323,6 @@ defmodule Nopea.DriftTest do
       {:ok, hash2} = Drift.compute_hash(manifest2)
 
       assert hash1 == hash2
-    end
-  end
-
-  describe "healing_suspended?/1" do
-    test "returns false when no annotations" do
-      resource = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{"name" => "my-config"}
-      }
-
-      refute Drift.healing_suspended?(resource)
-    end
-
-    test "returns false when annotations exist but no suspend annotation" do
-      resource = %{
-        "apiVersion" => "v1",
-        "kind" => "ConfigMap",
-        "metadata" => %{
-          "name" => "my-config",
-          "annotations" => %{
-            "app.kubernetes.io/managed-by" => "nopea"
-          }
-        }
-      }
-
-      refute Drift.healing_suspended?(resource)
-    end
-
-    test "returns true when nopea.io/suspend-heal is 'true'" do
-      resource = %{
-        "apiVersion" => "apps/v1",
-        "kind" => "Deployment",
-        "metadata" => %{
-          "name" => "api",
-          "annotations" => %{
-            "nopea.io/suspend-heal" => "true"
-          }
-        }
-      }
-
-      assert Drift.healing_suspended?(resource)
-    end
-
-    test "returns true when nopea.io/suspend-heal is '1'" do
-      resource = %{
-        "metadata" => %{
-          "name" => "api",
-          "annotations" => %{
-            "nopea.io/suspend-heal" => "1"
-          }
-        }
-      }
-
-      assert Drift.healing_suspended?(resource)
-    end
-
-    test "returns true when nopea.io/suspend-heal is 'yes'" do
-      resource = %{
-        "metadata" => %{
-          "name" => "api",
-          "annotations" => %{
-            "nopea.io/suspend-heal" => "yes"
-          }
-        }
-      }
-
-      assert Drift.healing_suspended?(resource)
-    end
-
-    test "returns false for invalid suspend-heal values" do
-      resource = %{
-        "metadata" => %{
-          "name" => "api",
-          "annotations" => %{
-            "nopea.io/suspend-heal" => "false"
-          }
-        }
-      }
-
-      refute Drift.healing_suspended?(resource)
-    end
-
-    test "handles nil metadata gracefully" do
-      resource = %{"apiVersion" => "v1", "kind" => "ConfigMap"}
-
-      refute Drift.healing_suspended?(resource)
     end
   end
 end

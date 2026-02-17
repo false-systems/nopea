@@ -55,7 +55,7 @@ defmodule Nopea.Events.EmitterTest do
 
       decoded = Jason.decode!(body)
       assert decoded["type"] == "dev.cdevents.service.deployed.0.3.0"
-      assert decoded["source"] == "/nopea/worker/my-app"
+      assert decoded["source"] == "/nopea/deploy/my-app"
     end
   end
 

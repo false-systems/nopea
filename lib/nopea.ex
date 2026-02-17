@@ -1,18 +1,8 @@
 defmodule Nopea do
   @moduledoc """
-  Documentation for `Nopea`.
+  AI-native deployment tool with memory.
+
+  Nopea learns from every deployment, building a knowledge graph
+  that makes each subsequent deploy smarter.
   """
-
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Nopea.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
 end

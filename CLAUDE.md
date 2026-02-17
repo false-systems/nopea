@@ -1,225 +1,67 @@
-# NOPEA: Lightweight GitOps Controller
-
-**A learning project for BEAM-native GitOps**
+# NOPEA: AI-Native Deployment Tool with Memory
 
 ---
 
-## PROJECT STATUS
+## WHAT IS NOPEA
 
-**What's Implemented:**
-- Worker GenServer per GitRepository (full sync logic)
-- ETS cache (4 tables, no Redis)
-- K8s CRD controller (watch + reconcile)
-- Git operations via Rust Port (libgit2)
-- YAML manifest parsing + K8s server-side apply
-- Three-way drift detection
-- Webhook endpoint (GitHub + GitLab)
-- CDEvents emission (async, retrying)
-- ULID generator (monotonic)
-- Health/readiness probes
+Nopea is a deployment tool that builds a knowledge graph from every deployment. The core innovation: **memory**. Every existing tool (ArgoCD, Flux, Helm) treats each deploy as the first deploy ever. Nopea learns.
 
-**Code Stats:**
-- ~3200 lines Elixir across 15 modules
-- ~300 lines Rust (nopea-git binary)
-- ~2800 lines tests (14 test files)
-- Strong typespecs throughout
+**NOT a GitOps controller.** No CRDs, no git sync, no reconciliation loops. Nopea is a CLI/API tool that deploys manifests to Kubernetes and remembers what happened.
 
 ---
 
-## ARCHITECTURE OVERVIEW
+## ARCHITECTURE
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         BEAM VM                                  │
-│                                                                  │
-│  application.ex                                                  │
-│  └── Supervisor tree: Cache, ULID, Emitter, Controller, Workers  │
-│                                                                  │
-│  worker.ex (503 lines)                                           │
-│  ├── GenServer per GitRepository                                 │
-│  ├── :startup_sync - initial clone/fetch                         │
-│  ├── :poll - periodic git fetch                                  │
-│  ├── :reconcile - drift detection (2x poll interval)             │
-│  └── :webhook - external trigger                                 │
-│                                                                  │
-│  cache.ex (4 ETS tables)                                         │
-│  ├── :nopea_commits - last synced commit per repo                │
-│  ├── :nopea_resources - resource hashes for change detection     │
-│  ├── :nopea_sync_states - full sync state                        │
-│  └── :nopea_last_applied - for three-way drift detection         │
-│                                                                  │
-│  git.ex (Rust Port via msgpack)                                  │
-│  ├── sync(url, branch, path, depth) - clone or fetch+reset       │
-│  ├── files(path, subpath) - list YAML files                      │
-│  ├── read(path, file) - read file as base64                      │
-│  ├── head(path) - get commit info                                │
-│  └── ls_remote(url, branch) - cheap remote check                 │
-│                                                                  │
-│  drift.ex                                                        │
-│  └── three_way_diff(last_applied, desired, live)                 │
-│      → :no_drift | {:git_change, diff} | {:manual_drift, diff}   │
-└─────────────────────────────────────────────────────────────────┘
+CLI/MCP/API → Deploy.run(spec)
+    → Memory.get_deploy_context()        # KERTO graph query
+    → select_strategy()                  # direct/canary/blue_green
+    → Strategy.*.execute()               # K8s server-side apply
+    → Drift.verify_manifest()            # post-deploy 3-way diff
+    → Memory.record_deploy()             # graph update (EWMA)
+    → Occurrence.build() + persist()     # FALSE Protocol
 ```
 
-### Key Design Decisions
+### OTP Supervision Tree
 
-1. **One GenServer per repo** - Crash isolation, supervisor restarts
-2. **ETS not Redis** - State recoverable from Git/K8s, no external deps
-3. **Rust Port for Git** - libgit2 reliability, msgpack protocol
-4. **Three-way drift** - Distinguishes manual changes from git changes
-5. **Async CDEvents** - Queue with exponential backoff retry
-
----
-
-## ELIXIR REQUIREMENTS
-
-### Absolute Rules
-
-1. **No bare `raise`** - Use `{:error, reason}` tuples
-2. **No `IO.puts`** - Use `require Logger; Logger.info(...)`
-3. **No string enums** - Use atoms: `:syncing` not `"syncing"`
-4. **Always handle errors** - Pattern match `{:ok, _}` and `{:error, _}`
-
-### Error Handling Pattern
-
-```elixir
-# BAD
-{:ok, result} = some_function()
-
-# GOOD
-case some_function() do
-  {:ok, result} -> handle_success(result)
-  {:error, reason} -> handle_error(reason)
-end
-
-# OR with `with`
-with {:ok, repo} <- fetch_repo(name),
-     {:ok, manifests} <- parse_manifests(repo) do
-  apply_manifests(manifests)
-else
-  {:error, reason} -> {:error, reason}
-end
 ```
-
-### Logging Pattern
-
-```elixir
-# BAD
-IO.puts("Syncing: #{name}")
-
-# GOOD
-require Logger
-Logger.info("Syncing repository", repo: name, commit: sha)
-Logger.warning("Sync failed", repo: name, error: reason)
+Nopea.Application
+├── Nopea.ULID                    # Monotonic ID generator
+├── TelemetryMetricsPrometheus    # Metrics (optional)
+├── Nopea.Events.Emitter          # CDEvents HTTP emitter (optional)
+├── Nopea.Memory                  # GenServer wrapping KERTO Graph
+├── Nopea.Cache                   # ETS tables for deployment state
+├── Nopea.Registry                # Process registry
+├── Nopea.Deploy.Supervisor       # DynamicSupervisor for deploy workers
+└── Nopea.API.Router              # Plug/Cowboy HTTP (optional)
 ```
 
 ---
 
-## TDD WORKFLOW
+## KEY MODULES
 
-**RED → GREEN → REFACTOR** - Always.
-
-### RED: Write Failing Test First
-
-```elixir
-defmodule Nopea.WorkerTest do
-  use ExUnit.Case, async: true
-
-  test "sync_now triggers git fetch and apply" do
-    repo = %{name: "test-repo", url: "https://github.com/org/repo.git"}
-    {:ok, pid} = Nopea.Worker.start_link(repo)
-
-    result = Nopea.Worker.sync_now(pid)
-
-    assert {:ok, %{commit: _}} = result
-  end
-end
-```
-
-### GREEN: Minimal Implementation
-
-Write just enough code to make the test pass.
-
-### REFACTOR: Clean Up
-
-Add typespecs, docs, edge cases. Tests must still pass.
-
----
-
-## OTP PATTERNS IN THE CODEBASE
-
-### GenServer State
-
-```elixir
-defmodule Nopea.Worker do
-  use GenServer
-
-  defstruct [
-    :repo_name,
-    :repo_url,
-    :branch,
-    :last_commit,
-    :retry_count,
-    :sync_timer
-  ]
-end
-```
-
-### DynamicSupervisor
-
-```elixir
-defmodule Nopea.Supervisor do
-  use DynamicSupervisor
-
-  def start_worker(git_repository) do
-    spec = {Nopea.Worker, git_repository}
-    DynamicSupervisor.start_child(__MODULE__, spec)
-  end
-
-  def stop_worker(repo_name) do
-    case Registry.lookup(Nopea.Registry, repo_name) do
-      [{pid, _}] -> DynamicSupervisor.terminate_child(__MODULE__, pid)
-      [] -> {:error, :not_found}
-    end
-  end
-end
-```
-
-### ETS Tables
-
-```elixir
-# Public tables - Worker crashes don't lose data
-:ets.new(:nopea_commits, [:set, :public, :named_table])
-:ets.new(:nopea_resources, [:set, :public, :named_table])
-:ets.new(:nopea_sync_states, [:set, :public, :named_table])
-:ets.new(:nopea_last_applied, [:set, :public, :named_table])
-```
-
----
-
-## VERIFICATION CHECKLIST
-
-Before every commit:
-
-```bash
-# Format
-mix format
-
-# Lint
-mix credo --strict
-
-# Type check
-mix dialyzer
-
-# Tests
-mix test
-
-# No IO.puts
-grep -r "IO.puts\|IO.inspect" lib/
-
-# No bare raises
-grep -r "raise \"" lib/
-```
+| Module | Role | Lines |
+|--------|------|-------|
+| `Deploy` | Orchestration: context → strategy → execute → verify → record | ~100 |
+| `Deploy.Spec` / `Result` | Structs for deploy lifecycle | ~100 |
+| `Deploy.Worker` / `Supervisor` | Per-deploy GenServer + DynamicSupervisor | ~60 |
+| `Strategy.Direct` | Immediate K8s apply | ~20 |
+| `Strategy.Canary` | Gradual rollout (stub, step API exposed) | ~50 |
+| `Strategy.BlueGreen` | Slot-based cutover (stub, slot API exposed) | ~60 |
+| `Memory` | GenServer owning KERTO `Graph.t()` | ~150 |
+| `Memory.Ingestor` | Deploy events → graph upsert operations | ~100 |
+| `Memory.Query` | Context queries (failure patterns, deps) | ~100 |
+| `Occurrence` | FALSE Protocol occurrence generator | ~150 |
+| `MCP` | JSON-RPC MCP server (tools/list, tools/call) | ~200 |
+| `API.Router` | HTTP API (deploy, context, history endpoints) | ~100 |
+| `SYKLI.Target` | SYKLI target behaviour adapter | ~60 |
+| `CLI` | Escript entry point | ~100 |
+| `K8s` | K8s API wrapper (conn, apply, get, delete) | ~70 |
+| `Applier` | YAML parsing + K8s server-side apply | ~200 |
+| `Drift` | Three-way drift detection (normalize, diff, verify) | ~250 |
+| `Cache` | ETS tables: deployments, service_state, graph_snapshot | ~100 |
+| `Events` / `Events.Emitter` | CDEvents builder + async HTTP emitter | ~200 |
+| `ULID` | Monotonic ULID generator | ~80 |
 
 ---
 
@@ -228,58 +70,185 @@ grep -r "raise \"" lib/
 | What | Where |
 |------|-------|
 | OTP Application | `lib/nopea/application.ex` |
-| Worker GenServer | `lib/nopea/worker.ex` |
-| DynamicSupervisor | `lib/nopea/supervisor.ex` |
-| K8s Controller | `lib/nopea/controller.ex` |
-| ETS Cache | `lib/nopea/cache.ex` |
-| Rust Port interface | `lib/nopea/git.ex` |
-| K8s client | `lib/nopea/k8s.ex` |
-| YAML parser + applier | `lib/nopea/applier.ex` |
+| Deploy orchestration | `lib/nopea/deploy.ex` |
+| Deploy structs | `lib/nopea/deploy/spec.ex`, `result.ex` |
+| Deploy workers | `lib/nopea/deploy/worker.ex`, `supervisor.ex` |
+| Strategy behaviour | `lib/nopea/strategy.ex` |
+| Strategy impls | `lib/nopea/strategy/direct.ex`, `canary.ex`, `blue_green.ex` |
+| Memory (KERTO) | `lib/nopea/memory.ex` |
+| Memory helpers | `lib/nopea/memory/ingestor.ex`, `query.ex` |
+| FALSE Protocol | `lib/nopea/occurrence.ex` |
+| MCP server | `lib/nopea/mcp.ex` |
+| HTTP API | `lib/nopea/api/router.ex` |
+| SYKLI integration | `lib/nopea/sykli/target.ex` |
+| CLI | `lib/nopea/cli.ex` |
+| K8s client | `lib/nopea/k8s.ex`, `k8s/behaviour.ex` |
+| YAML + apply | `lib/nopea/applier.ex` |
 | Drift detection | `lib/nopea/drift.ex` |
-| ULID generator | `lib/nopea/ulid.ex` |
-| Webhook parsing | `lib/nopea/webhook.ex` |
-| CDEvents builder | `lib/nopea/events.ex` |
-| Webhook router | `lib/nopea/webhook/router.ex` |
-| CDEvents emitter | `lib/nopea/events/emitter.ex` |
-| Rust git binary | `nopea-git/src/main.rs` |
-| K8s manifests | `deploy/` |
+| Cache (ETS) | `lib/nopea/cache.ex` |
+| Events | `lib/nopea/events.ex`, `events/emitter.ex` |
+| Metrics | `lib/nopea/metrics.ex` |
+| ULID | `lib/nopea/ulid.ex` |
+| Clustering | `lib/nopea/cluster.ex`, `distributed_*.ex` |
 
 ---
 
 ## DEPENDENCIES
 
-### Elixir (mix.exs)
-
 | Package | Purpose |
 |---------|---------|
+| `kerto` | Knowledge graph (path dep: `../kerto`) |
 | `k8s` | Kubernetes client |
 | `yaml_elixir` | YAML parsing |
-| `req` | HTTP client |
-| `jason` | JSON encoding |
-| `msgpax` | Rust Port protocol |
-| `plug_cowboy` | Webhook server |
-| `telemetry` | Observability |
-| `mox` | Test mocking |
+| `jason` | JSON |
+| `plug_cowboy` | HTTP server |
+| `req` | HTTP client (CDEvents) |
+| `libcluster` | BEAM clustering (optional) |
+| `horde` | Distributed supervisor (optional) |
+| `telemetry` + `telemetry_metrics` + `prometheus_core` | Observability |
+| `mox` | Test mocking (test only) |
+| `credo` | Linting (dev/test only) |
 
-### Rust (nopea-git/Cargo.toml)
+**No Rust. No msgpax. No git operations.**
 
-| Crate | Purpose |
-|-------|---------|
-| `git2` | libgit2 bindings |
-| `rmp-serde` | MessagePack |
-| `base64` | File encoding |
-| `thiserror` | Error types |
+---
+
+## ELIXIR PATTERNS
+
+### Error Handling
+
+```elixir
+# Use {:ok, _} / {:error, _} tuples, not bare raise
+with {:ok, conn} <- K8s.conn(),
+     {:ok, applied} <- Applier.apply_manifests(manifests, conn, ns) do
+  {:ok, applied}
+end
+```
+
+### Logging
+
+```elixir
+require Logger
+Logger.info("Deploy completed: #{service} [#{deploy_id}] in #{duration_ms}ms")
+# No IO.puts, no IO.inspect in production code
+```
+
+### Atoms not Strings
+
+```elixir
+# Status: :completed, :failed — not "completed", "failed"
+# Strategy: :direct, :canary, :blue_green — not strings
+```
+
+### K8s Mock Pattern
+
+`Nopea.K8s` implements `Nopea.K8s.Behaviour`. In tests, `Nopea.K8sMock` (Mox) is injected via:
+
+```elixir
+# test_helper.exs
+Application.put_env(:nopea, :k8s_module, Nopea.K8sMock)
+
+# Direct.execute uses:
+defp k8s_module, do: Application.get_env(:nopea, :k8s_module, Nopea.K8s)
+
+# Tests that don't set explicit expectations:
+setup do
+  Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+  :ok
+end
+
+# Tests with spawned processes (Worker, Supervisor):
+setup :set_mox_global
+```
+
+---
+
+## TDD WORKFLOW
+
+**RED → GREEN → REFACTOR** — Always.
+
+1. Write failing test
+2. Verify it fails
+3. Write minimal implementation
+4. Verify all tests pass
+5. Refactor, add edge cases
+6. Run `mix format && mix compile --warnings-as-errors && mix test`
+
+---
+
+## VERIFICATION
+
+```bash
+mix compile --warnings-as-errors
+mix test                          # 235 tests, 0 failures
+mix format --check-formatted
+mix credo
+mix escript.build                 # CLI binary
+```
+
+---
+
+## MEMORY SYSTEM (KERTO)
+
+The memory is a KERTO knowledge graph stored in the `Nopea.Memory` GenServer state.
+
+**Graph nodes**: services, namespaces, errors, strategies
+**Graph relationships**: `:deployed_to`, `:failed_with`, `:depends_on`, `:used_strategy`
+**EWMA decay**: Weights decay hourly (factor 0.98) so recent deploys matter more
+
+Key queries:
+- `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
+- `Memory.record_deploy(result)` → ingest into graph (cast)
+- `Memory.get_graph_stats()` → node/relationship counts
+
+---
+
+## FALSE PROTOCOL
+
+Occurrences are structured events generated after every deployment.
+
+**Types**: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
+**Blocks**: error, reasoning (includes memory context), history, deploy_data
+**Storage**: `.nopea/occurrence.json` (cold) + `.nopea/occurrences/*.etf` (warm)
+
+---
+
+## MCP SERVER
+
+JSON-RPC 2.0 over stdin/stdout. Tools:
+
+| Tool | Description |
+|------|-------------|
+| `nopea_deploy` | Deploy manifests to K8s |
+| `nopea_context` | Get memory context for a service |
+| `nopea_history` | Get deployment history |
+| `nopea_explain` | Explain strategy selection reasoning |
+
+---
+
+## STRATEGY AUTO-SELECTION
+
+```elixir
+# Explicit strategy always wins
+defp select_strategy(%Spec{strategy: strategy}, _) when not is_nil(strategy), do: strategy
+
+# Memory-based: high failure confidence → canary
+defp select_strategy(_spec, %{failure_patterns: patterns}) do
+  if Enum.any?(patterns, fn p -> p.confidence > 0.15 end), do: :canary, else: :direct
+end
+
+# Default: direct
+defp select_strategy(_spec, _context), do: :direct
+```
 
 ---
 
 ## AGENT INSTRUCTIONS
 
-When working on this codebase:
-
-1. **Read first** - Understand OTP patterns before changing
-2. **TDD always** - Write failing test, implement, refactor
-3. **No stubs** - Complete implementations only
-4. **Typespecs required** - All public functions
-5. **Run checks** - `mix format && mix credo --strict && mix test`
-
-**This is a learning project** - exploring OTP patterns and BEAM superpowers. Ask questions if unclear.
+1. **Read first** — understand the module before changing it
+2. **TDD always** — write failing test, implement, refactor
+3. **No stubs** — complete implementations only
+4. **Typespecs required** — all public functions
+5. **Run checks** — `mix compile --warnings-as-errors && mix test`
+6. **No IO.puts** — use `require Logger`
+7. **No bare raise** — use `{:error, reason}` tuples
