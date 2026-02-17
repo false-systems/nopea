@@ -67,19 +67,6 @@ defmodule Nopea.Metrics do
     start_time
   end
 
-  @spec emit_deploy_stop(integer(), map()) :: :ok
-  def emit_deploy_stop(start_time, metadata) do
-    duration = System.monotonic_time() - start_time
-
-    :telemetry.execute(
-      [:nopea, :deploy, :stop],
-      %{duration: duration},
-      metadata
-    )
-
-    :ok
-  end
-
   @spec emit_deploy_error(integer(), map()) :: :ok
   def emit_deploy_error(start_time, metadata) do
     duration = System.monotonic_time() - start_time
@@ -88,39 +75,6 @@ defmodule Nopea.Metrics do
       [:nopea, :deploy, :error],
       %{duration: duration},
       metadata
-    )
-
-    :ok
-  end
-
-  @spec emit_memory_query(map()) :: :ok
-  def emit_memory_query(metadata) do
-    :telemetry.execute(
-      [:nopea, :memory, :query],
-      %{system_time: System.system_time()},
-      metadata
-    )
-
-    :ok
-  end
-
-  @spec emit_verify_drift(map()) :: :ok
-  def emit_verify_drift(metadata) do
-    :telemetry.execute(
-      [:nopea, :verify, :drift],
-      %{count: 1},
-      metadata
-    )
-
-    :ok
-  end
-
-  @spec set_active_deploys(non_neg_integer()) :: :ok
-  def set_active_deploys(count) do
-    :telemetry.execute(
-      [:nopea, :deploys, :active],
-      %{count: count},
-      %{}
     )
 
     :ok

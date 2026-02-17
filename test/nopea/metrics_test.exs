@@ -32,24 +32,6 @@ defmodule Nopea.MetricsTest do
     end
   end
 
-  describe "emit_deploy_stop/2" do
-    test "emits telemetry event for deploy stop with duration" do
-      ref =
-        :telemetry_test.attach_event_handlers(self(), [
-          [:nopea, :deploy, :stop]
-        ])
-
-      start_time = System.monotonic_time()
-      Process.sleep(10)
-      Metrics.emit_deploy_stop(start_time, %{service: "test-svc", strategy: :direct})
-
-      assert_receive {[:nopea, :deploy, :stop], ^ref, %{duration: duration},
-                      %{service: "test-svc", strategy: :direct}}
-
-      assert duration > 0
-    end
-  end
-
   describe "emit_deploy_error/2" do
     test "emits telemetry event for deploy error" do
       ref =
@@ -62,19 +44,6 @@ defmodule Nopea.MetricsTest do
 
       assert_receive {[:nopea, :deploy, :error], ^ref, %{duration: _},
                       %{service: "test-svc", error: :timeout}}
-    end
-  end
-
-  describe "set_active_deploys/1" do
-    test "emits telemetry event for active deploy count" do
-      ref =
-        :telemetry_test.attach_event_handlers(self(), [
-          [:nopea, :deploys, :active]
-        ])
-
-      Metrics.set_active_deploys(3)
-
-      assert_receive {[:nopea, :deploys, :active], ^ref, %{count: 3}, %{}}
     end
   end
 end
