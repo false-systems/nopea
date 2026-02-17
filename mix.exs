@@ -4,11 +4,12 @@ defmodule Nopea.MixProject do
   def project do
     [
       app: :nopea,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      description: "Fast GitOps controller for Kubernetes",
+      escript: [main_module: Nopea.CLI],
+      description: "AI-native deployment tool with memory",
       package: package()
     ]
   end
@@ -25,6 +26,9 @@ defmodule Nopea.MixProject do
       # K8s client
       {:k8s, "~> 2.6"},
 
+      # Knowledge graph
+      {:kerto, path: "../kerto"},
+
       # Distributed Erlang clustering
       {:libcluster, "~> 3.3"},
       {:horde, "~> 0.9"},
@@ -32,16 +36,13 @@ defmodule Nopea.MixProject do
       # YAML parsing
       {:yaml_elixir, "~> 2.9"},
 
-      # HTTP client (for webhooks, CDEvents)
+      # HTTP client (for CDEvents)
       {:req, "~> 0.5"},
 
       # JSON
       {:jason, "~> 1.4"},
 
-      # Msgpack (for Rust Port protocol)
-      {:msgpax, "~> 2.4"},
-
-      # Web server (for webhooks)
+      # Web server (for API)
       {:plug_cowboy, "~> 2.7"},
 
       # Telemetry & Metrics

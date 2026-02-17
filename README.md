@@ -1,35 +1,75 @@
 # NOPEA
 
-**Lightweight GitOps Controller**
+**AI-native deployment tool with memory**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Elixir](https://img.shields.io/badge/elixir-1.16%2B-purple.svg)](https://elixir-lang.org)
-[![Tests](https://img.shields.io/badge/tests-171%20passing-green.svg)]()
+[![Elixir](https://img.shields.io/badge/elixir-1.14%2B-purple.svg)](https://elixir-lang.org)
+[![Tests](https://img.shields.io/badge/tests-235%20passing-green.svg)]()
 
-A GitOps controller for Kubernetes written in Elixir.
+Every deployment tool treats each deploy as the first deploy ever. Nopea remembers.
 
-**This is a learning project** - I'm building it to understand:
-- How OTP supervision and GenServers work
-- ETS for in-memory caching (no Redis, no database)
-- Process isolation and crash recovery
-- Rust Ports for external process communication
-- Kubernetes controller patterns in Elixir
-
-**Current Status**: Core features working - Git sync, K8s apply, drift detection, webhooks.
+**ArgoCD has no memory. Nopea remembers.**
 
 ---
 
-## How It Works
+## What Is This?
+
+Nopea is a deployment tool that builds a knowledge graph from every deployment. Each deploy makes the next one smarter.
 
 ```
-Git repo  ──poll/webhook──►  NOPEA  ──apply──►  Kubernetes
+Deploy #1: direct apply (no history)
+Deploy #2: direct apply (1 success recorded)
+Deploy #3: FAILED — recorded failure pattern
+Deploy #4: auto-selects canary strategy (learned from #3)
+Deploy #5: canary succeeds — confidence updated
 ```
 
-1. Create a `GitRepository` CRD
-2. NOPEA spawns a Worker GenServer for it
-3. Worker clones/fetches via Rust Port (libgit2)
-4. Worker applies manifests via K8s server-side apply
-5. Repeat on webhook or timer
+The graph learns patterns like: *"auth-service deploys fail when redis is also updating"* (0.85 confidence, seen 4 times). Next time an AI agent deploys auth-service, it gets warned.
+
+---
+
+## Quick Start
+
+```bash
+# Build
+mix deps.get
+mix escript.build
+
+# Deploy manifests
+./nopea deploy -f manifests/ -s my-app -n default
+
+# Check what Nopea learned
+./nopea context my-app --json
+
+# Deploy again — strategy selected based on memory
+./nopea deploy -f manifests/ -s my-app -n default
+
+# See deployment history
+./nopea history my-app
+```
+
+**Requirements:**
+- Elixir 1.14+
+- Kubernetes 1.22+ (for server-side apply)
+- [Kerto](https://github.com/yairfalse/kerto) (knowledge graph, path dependency)
+
+---
+
+## The Memory Loop
+
+```
+1. Deploy request arrives (CLI / MCP / HTTP API / SYKLI)
+2. Memory.get_deploy_context("my-app", "prod")
+   → failure_rate, dependencies, risky patterns, recommendations
+3. Strategy auto-selected based on context
+   → high failure rate? → canary
+   → unknown service? → direct
+4. Deploy executes (K8s server-side apply)
+5. Post-deploy verification (three-way drift check)
+6. Memory records outcome → KERTO graph updated
+7. FALSE Protocol occurrence written to .nopea/
+8. Next deploy starts at step 2 with MORE context
+```
 
 ---
 
@@ -37,42 +77,15 @@ Git repo  ──poll/webhook──►  NOPEA  ──apply──►  Kubernetes
 
 | Feature | Description |
 |---------|-------------|
-| **One GenServer per Repo** | Process isolation - crash affects only that repo |
-| **ETS Cache** | No Redis, no database - pure BEAM |
-| **Rust Git Port** | libgit2 for reliable git operations |
-| **Three-Way Drift Detection** | Detects manual changes vs git changes |
-| **Configurable Healing** | auto/manual/notify policies + grace period |
-| **Break-Glass Annotation** | Per-resource opt-out for emergencies |
-| **Webhook Support** | GitHub and GitLab push events |
-| **CDEvents** | Built-in observability events |
-| **Health Endpoints** | `/health` and `/ready` probes |
-
----
-
-## Quick Start
-
-```bash
-# Clone and build
-git clone https://github.com/yairfalse/nopea
-cd nopea
-
-# Build Rust git binary
-cd nopea-git && cargo build --release && cd ..
-
-# Install Elixir deps
-mix deps.get
-
-# Run tests
-mix test
-
-# Run controller
-iex -S mix
-```
-
-**Requirements:**
-- Elixir 1.16+
-- Rust 1.75+
-- Kubernetes 1.22+ (for server-side apply)
+| **Memory** | KERTO knowledge graph learns from every deploy |
+| **Strategy Selection** | Auto-selects direct/canary/blue-green based on history |
+| **Post-Deploy Verification** | Three-way drift detection confirms deploy applied correctly |
+| **FALSE Protocol** | Structured occurrences for AI consumption |
+| **MCP Server** | Model Context Protocol for AI agent integration |
+| **HTTP API** | REST endpoints for SYKLI and external tools |
+| **CLI** | `nopea deploy`, `nopea context`, `nopea history` |
+| **CDEvents** | Async deployment events with retry queue |
+| **ETS Cache** | In-memory deployment state, no external deps |
 
 ---
 
@@ -82,153 +95,101 @@ iex -S mix
 ┌─────────────────────────────────────────────────────────────────┐
 │                         BEAM VM                                  │
 │                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  OTP Application                                           │ │
-│  │  ├── Cache (4 ETS tables)                                  │ │
-│  │  ├── ULID Generator (monotonic IDs)                        │ │
-│  │  ├── CDEvents Emitter (async HTTP queue)                   │ │
-│  │  ├── Controller (K8s CRD watcher)                          │ │
-│  │  ├── DynamicSupervisor                                     │ │
-│  │  │   ├── Worker (repo: my-app)                             │ │
-│  │  │   ├── Worker (repo: other-app)                          │ │
-│  │  │   └── ...                                               │ │
-│  │  └── Webhook Router (Plug/Cowboy)                          │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                              │                                   │
-│                              ▼                                   │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Git Port (Rust via stdin/stdout msgpack)                  │ │
-│  └────────────────────────────────────────────────────────────┘ │
+│  OTP Supervision Tree                                            │
+│  ├── ULID           (monotonic ID generator)                     │
+│  ├── Metrics        (Telemetry + Prometheus)                     │
+│  ├── Events.Emitter (async CDEvents with retry)                  │
+│  ├── Memory         (KERTO graph — the brain)                    │
+│  ├── Cache          (ETS deployment state)                       │
+│  ├── Registry       (process registry)                           │
+│  ├── Deploy.Supervisor (DynamicSupervisor for workers)           │
+│  └── API.Router     (Plug/Cowboy HTTP, optional)                 │
+│                                                                  │
+│  Deploy Flow                                                     │
+│  CLI/MCP/API → Deploy.run(spec)                                  │
+│       → Memory.get_deploy_context()                              │
+│       → select_strategy()                                        │
+│       → Strategy.Direct/Canary/BlueGreen.execute()               │
+│       → K8s.apply_manifests() (server-side apply)                │
+│       → Drift.verify_manifest() (post-deploy check)              │
+│       → Memory.record_deploy() (graph update)                    │
+│       → Occurrence.build() + persist() (FALSE Protocol)          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: Worker crash = only that repo affected. Supervisor restarts it.
-
 ---
 
-## GitRepository CRD
+## Interfaces
 
-```yaml
-apiVersion: nopea.false.systems/v1alpha1
-kind: GitRepository
-metadata:
-  name: my-app
-  namespace: default
-spec:
-  url: https://github.com/org/my-app.git
-  branch: main
-  path: deploy/              # subdirectory (optional)
-  interval: 5m               # poll interval
-  targetNamespace: default   # where to apply
-  secretRef:                 # git auth (optional)
-    name: git-credentials
-
-  # Healing configuration
-  suspend: false             # pause all syncing
-  healPolicy: auto           # auto | manual | notify
-  healGracePeriod: 5m        # wait before healing manual drift
-status:
-  lastSyncedCommit: abc123
-  lastSyncTime: "2024-01-15T10:30:00Z"
-  phase: Synced
-```
-
----
-
-## Sync Triggers
-
-| Trigger | When | Latency |
-|---------|------|---------|
-| Webhook | Git push | ~1-2s |
-| Poll | Timer | configurable |
-| Drift | Reconcile loop | 2x poll interval |
-
----
-
-## Webhook Setup
-
-NOPEA accepts webhooks from GitHub and GitLab:
+### CLI
 
 ```bash
-# GitHub webhook URL
-https://nopea.example.com/webhook/my-app
-
-# Configure secret
-NOPEA_WEBHOOK_SECRET=your-secret-here
+nopea deploy -f <path> -s <service> -n <namespace> [--strategy direct|canary|blue_green]
+nopea status <service>
+nopea context <service> [--json]
+nopea history <service>
+nopea memory
+nopea serve          # daemon mode with HTTP API
 ```
 
-Supports:
-- GitHub: HMAC-SHA256 signature verification
-- GitLab: Token verification
+### MCP Server
+
+```json
+{
+  "mcpServers": {
+    "nopea": { "command": "nopea", "args": ["mcp"] }
+  }
+}
+```
+
+Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_explain`
+
+### HTTP API
+
+```
+GET  /health              → {"status": "ok"}
+GET  /ready               → {"status": "ready"}
+POST /api/deploy          → deploy manifests
+GET  /api/context/:svc    → memory context
+GET  /api/history/:svc    → deployment history
+```
 
 ---
 
-## CDEvents
+## Deployment Strategies
 
-NOPEA emits CDEvents for observability:
+| Strategy | When Selected | How It Works |
+|----------|---------------|--------------|
+| **Direct** | Default, low-risk services | Apply all manifests immediately |
+| **Canary** | Auto: failure patterns > 15% confidence | Gradual rollout (10→25→50→75→100%) |
+| **Blue-Green** | Explicit or future auto-selection | Deploy to inactive slot, instant cutover |
 
-| Event | When |
-|-------|------|
-| `service.deployed` | First successful sync |
-| `service.upgraded` | Sync with new commit |
-| `service.removed` | Sync failure |
-| `drift.detected` | Manual change detected |
+Strategy auto-selection uses the KERTO graph:
 
-Configure:
 ```elixir
-config :nopea, cdevents_endpoint: "http://event-collector:8080/events"
+# Memory shows this service has failed before with high confidence
+context = Memory.get_deploy_context("auth-service", "prod")
+# failure_patterns: [%{type: :concurrent_deploy, confidence: 0.85}]
+# → auto-selects :canary
 ```
 
 ---
 
-## Drift Detection & Healing
+## FALSE Protocol
 
-NOPEA uses **three-way diff** to detect drift:
+Every deployment generates a structured occurrence for AI agents:
 
-| Drift Type | What Happened | Action |
-|------------|---------------|--------|
-| `git_change` | Git updated | Always apply |
-| `manual_drift` | Someone used kubectl | Heal based on policy |
-| `conflict` | Both git and cluster changed | Git wins (configurable) |
-| `no_drift` | Everything matches | Do nothing |
-
-### Healing Policies
-
-```yaml
-spec:
-  healPolicy: auto      # Default: heal manual drift immediately
-  healPolicy: manual    # Detect and emit events, but don't heal
-  healPolicy: notify    # Same as manual + webhook (planned)
+```
+.nopea/
+├── occurrence.json              # Cold path: AI/external consumers
+└── occurrences/
+    ├── 01ABC123.etf             # Warm path: fast BEAM reload
+    └── ...
 ```
 
-### Grace Period
+Occurrence types: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
 
-Give operators time to commit their hotfix before NOPEA heals it:
-
-```yaml
-spec:
-  healGracePeriod: 5m   # Wait 5 minutes after detecting drift
-```
-
-### Break-Glass Annotation
-
-For emergencies, protect a resource from ALL changes (including git):
-
-```bash
-# Larry's 3 AM hotfix
-kubectl annotate deploy/api nopea.io/suspend-heal=true
-kubectl set image deploy/api image=hotfix-v1
-
-# NOPEA will skip this resource entirely:
-# - Won't revert to git state
-# - Won't apply git changes (even if someone pushes broken config)
-# - Will emit warning events
-
-# Later, remove annotation to resume GitOps
-kubectl annotate deploy/api nopea.io/suspend-heal-
-```
-
-**Important**: The annotation protects against both manual drift healing AND git changes. This prevents a bad git push at 05:00 from destroying Larry's 03:00 hotfix.
+Each occurrence includes error blocks, reasoning (with memory context), history, and deploy data.
 
 ---
 
@@ -237,26 +198,41 @@ kubectl annotate deploy/api nopea.io/suspend-heal-
 ```
 nopea/
 ├── lib/nopea/
-│   ├── application.ex      # OTP Application
-│   ├── supervisor.ex       # DynamicSupervisor
-│   ├── worker.ex           # GenServer per repo (503 lines)
-│   ├── controller.ex       # K8s CRD watcher
-│   ├── cache.ex            # ETS storage (4 tables)
-│   ├── git.ex              # Rust Port interface
-│   ├── k8s.ex              # K8s API client
-│   ├── applier.ex          # YAML parsing + K8s apply
-│   ├── drift.ex            # Three-way drift detection
-│   ├── ulid.ex             # Monotonic ID generator
-│   ├── webhook.ex          # Webhook parsing
-│   ├── events.ex           # CDEvents builder
-│   ├── webhook/router.ex   # Plug HTTP router
-│   └── events/emitter.ex   # CDEvents HTTP emitter
-├── nopea-git/              # Rust binary for git ops
-│   ├── Cargo.toml
-│   └── src/main.rs
-├── test/                   # ~2800 lines of tests
+│   ├── application.ex          # OTP supervision tree
+│   ├── deploy.ex               # Orchestration entry point
+│   ├── deploy/
+│   │   ├── spec.ex             # DeploySpec struct
+│   │   ├── result.ex           # DeployResult struct
+│   │   ├── worker.ex           # Per-deploy GenServer
+│   │   └── supervisor.ex       # DynamicSupervisor
+│   ├── strategy.ex             # Strategy behaviour
+│   ├── strategy/
+│   │   ├── direct.ex           # Immediate apply
+│   │   ├── canary.ex           # Gradual rollout
+│   │   └── blue_green.ex       # Slot-based cutover
+│   ├── memory.ex               # KERTO graph GenServer
+│   ├── memory/
+│   │   ├── ingestor.ex         # Deploy events → graph ops
+│   │   └── query.ex            # Context queries
+│   ├── occurrence.ex           # FALSE Protocol generator
+│   ├── mcp.ex                  # MCP server (JSON-RPC)
+│   ├── api/router.ex           # HTTP API (Plug)
+│   ├── sykli/target.ex         # SYKLI target integration
+│   ├── cli.ex                  # Escript entry point
+│   ├── k8s.ex                  # K8s API client
+│   ├── k8s/behaviour.ex        # K8s behaviour (for Mox)
+│   ├── applier.ex              # YAML parsing + server-side apply
+│   ├── drift.ex                # Three-way drift detection
+│   ├── cache.ex                # ETS deployment state
+│   ├── ulid.ex                 # Monotonic ID generator
+│   ├── events.ex               # CDEvents builder
+│   ├── events/emitter.ex       # Async CDEvents emitter
+│   ├── metrics.ex              # Telemetry metrics
+│   ├── cluster.ex              # libcluster (optional)
+│   ├── distributed_supervisor.ex  # Horde (optional)
+│   └── distributed_registry.ex    # Horde (optional)
+├── test/                       # 235 tests
 ├── config/
-├── deploy/                 # K8s manifests
 └── mix.exs
 ```
 
@@ -264,38 +240,13 @@ nopea/
 
 ## Development
 
-### Build & Test
-
 ```bash
-# Build Rust binary
-make rust
-
-# Run tests
-mix test
-
-# Run with integration tests
-mix test --include integration
-
-# Format
-mix format
-
-# Lint
-mix credo --strict
-
-# Type check
-mix dialyzer
-```
-
-### Makefile Targets
-
-```bash
-make build      # Build Rust + Elixir
-make test       # Run all tests
-make docker     # Build Docker image
-make deploy     # K8s deployment
-make kind-up    # Start Kind cluster
-make fmt        # Format both languages
-make lint       # Clippy + Credo
+mix deps.get
+mix test                     # 235 tests
+mix compile --warnings-as-errors
+mix format --check-formatted
+mix credo
+mix escript.build            # build CLI binary
 ```
 
 ---
@@ -304,50 +255,25 @@ make lint       # Clippy + Credo
 
 | Component | Purpose |
 |-----------|---------|
-| **Elixir** | Main language, OTP patterns |
-| **Rust** | Git operations (nopea-git binary) |
+| **Elixir** | OTP supervision, GenServers, ETS |
+| [kerto](https://github.com/yairfalse/kerto) | Knowledge graph (EWMA, content-addressed) |
 | [k8s](https://hex.pm/packages/k8s) | Kubernetes client |
 | [yaml_elixir](https://hex.pm/packages/yaml_elixir) | YAML parsing |
-| [req](https://hex.pm/packages/req) | HTTP client |
-| [plug_cowboy](https://hex.pm/packages/plug_cowboy) | Webhook server |
-| [msgpax](https://hex.pm/packages/msgpax) | Rust Port protocol |
-| [git2](https://crates.io/crates/git2) | Rust libgit2 bindings |
-
----
-
-## Design Decisions
-
-**Why Elixir?**
-
-BEAM provides process isolation, supervision trees, and ETS for free. One GenServer per repo means crash isolation without Redis or external coordination.
-
-**Why Rust for Git?**
-
-libgit2 is battle-tested. Rust Port gives us reliable git operations without shelling out. msgpack protocol over stdin/stdout.
-
-**Why ETS instead of Redis?**
-
-For a GitOps controller, state is recoverable from Git and Kubernetes. ETS is simpler, faster, and survives Worker crashes (but not VM restarts - which is fine).
-
-**Why Three-Way Drift Detection?**
-
-Two-way (git vs live) can't distinguish manual changes from git changes. Three-way (last_applied vs desired vs live) tells us exactly what drifted.
+| [jason](https://hex.pm/packages/jason) | JSON encoding |
+| [plug_cowboy](https://hex.pm/packages/plug_cowboy) | HTTP API |
+| [req](https://hex.pm/packages/req) | HTTP client (CDEvents) |
+| [libcluster](https://hex.pm/packages/libcluster) | BEAM clustering (optional) |
+| [horde](https://hex.pm/packages/horde) | Distributed supervisor (optional) |
+| [mox](https://hex.pm/packages/mox) | Test mocking |
 
 ---
 
 ## Naming
 
-**Nopea** (Finnish: "fast") - Part of a Finnish tool naming theme:
-- **NOPEA** (fast) - GitOps controller
-- **KULTA** (gold) - Progressive delivery controller
-- **RAUTA** (iron) - Gateway API controller
+**Nopea** (Finnish: "fast") — Part of the [False Systems](https://github.com/yairfalse) toolchain.
 
 ---
 
 ## License
 
 Apache 2.0
-
----
-
-**Learning Elixir. Learning K8s. Building tools.**

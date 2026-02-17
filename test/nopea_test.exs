@@ -1,8 +1,7 @@
 defmodule NopeaTest do
   use ExUnit.Case
-  doctest Nopea
 
-  test "greets the world" do
-    assert Nopea.hello() == :world
+  test "module exists" do
+    assert Code.ensure_loaded?(Nopea)
   end
 end

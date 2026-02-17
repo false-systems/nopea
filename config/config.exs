@@ -1,9 +1,8 @@
 import Config
 
-# Default configuration
 config :nopea,
-  enable_controller: true,
-  watch_namespace: "default"
+  enable_deploy_supervisor: true,
+  enable_memory: true,
+  enable_cache: true
 
-# Import environment specific config
 import_config "#{config_env()}.exs"

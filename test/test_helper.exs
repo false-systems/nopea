@@ -1,26 +1,10 @@
-# Integration tests require the Rust binary to be built
-# Run with: mix test --include integration
-
 # Define Mox mocks
 Mox.defmock(Nopea.K8sMock, for: Nopea.K8s.Behaviour)
-Mox.defmock(Nopea.GitMock, for: Nopea.Git.Behaviour)
 
-rust_binary_path =
-  Path.join([File.cwd!(), "nopea-git", "target", "release", "nopea-git"])
+# Route K8s calls through mock in tests
+Application.put_env(:nopea, :k8s_module, Nopea.K8sMock)
 
-rust_binary_available? = File.exists?(rust_binary_path)
-wants_integration? = Enum.any?(System.argv(), &(&1 =~ "integration"))
-
-# Warn if integration tests requested but binary missing
-if wants_integration? and not rust_binary_available? do
-  IO.puts("""
-  \n⚠️  Cannot run integration tests: Rust binary not found
-     Path: #{rust_binary_path}
-
-     Build with: cd nopea-git && cargo build --release
-
-     Running non-integration tests only...
-  """)
-end
+# Set up a dummy K8s.Conn for tests (config can't create structs)
+Application.put_env(:nopea, :k8s_conn, %K8s.Conn{})
 
 ExUnit.start(exclude: [:integration, :cluster])
