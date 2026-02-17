@@ -16,7 +16,7 @@ defmodule Nopea.Deploy do
 
   @spec run(Spec.t()) :: Result.t()
   def run(%Spec{} = spec) do
-    deploy_id = generate_deploy_id()
+    deploy_id = Nopea.Helpers.generate_ulid()
     start_time = System.monotonic_time()
 
     Logger.info("Deploy started: #{spec.service}/#{spec.namespace} [#{deploy_id}]")
@@ -217,13 +217,6 @@ defmodule Nopea.Deploy do
   end
 
   defp emitter_running?, do: Process.whereis(Nopea.Events.Emitter) != nil
-
-  defp generate_deploy_id do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
-  end
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)

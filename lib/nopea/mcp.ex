@@ -200,24 +200,11 @@ defmodule Nopea.MCP do
         service: service,
         namespace: args["namespace"] || "default",
         manifests: args["manifests"] || [],
-        strategy: parse_strategy(args["strategy"])
+        strategy: Nopea.Helpers.parse_strategy(args["strategy"])
       }
 
       result = Nopea.Deploy.run(spec)
-
-      {:ok,
-       Jason.encode!(
-         %{
-           deploy_id: result.deploy_id,
-           status: result.status,
-           service: result.service,
-           namespace: result.namespace,
-           strategy: result.strategy,
-           duration_ms: result.duration_ms,
-           manifest_count: result.manifest_count
-         },
-         pretty: true
-       )}
+      {:ok, Jason.encode!(Nopea.Helpers.serialize_deploy_result(result), pretty: true)}
     end
   rescue
     e -> {:error, "Deploy failed: #{Exception.message(e)}"}
@@ -259,11 +246,6 @@ defmodule Nopea.MCP do
           "No significant failure patterns detected. Service is known and stable."
     end
   end
-
-  defp parse_strategy("canary"), do: :canary
-  defp parse_strategy("blue_green"), do: :blue_green
-  defp parse_strategy("direct"), do: :direct
-  defp parse_strategy(_), do: nil
 
   defp success_response(id, result) do
     %{"jsonrpc" => "2.0", "id" => id, "result" => result}

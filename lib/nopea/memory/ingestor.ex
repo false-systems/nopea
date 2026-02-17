@@ -10,7 +10,7 @@ defmodule Nopea.Memory.Ingestor do
 
   @spec ingest(Graph.t(), map()) :: Graph.t()
   def ingest(graph, %{service: service, namespace: namespace, status: status} = result) do
-    ulid = generate_ulid()
+    ulid = Nopea.Helpers.generate_ulid()
     confidence = status_confidence(status)
 
     # Upsert service node
@@ -87,11 +87,4 @@ defmodule Nopea.Memory.Ingestor do
   defp normalize_error_name({type, _msg}) when is_atom(type), do: Atom.to_string(type)
   defp normalize_error_name(error) when is_binary(error), do: error
   defp normalize_error_name(error), do: inspect(error)
-
-  defp generate_ulid do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
-  end
 end

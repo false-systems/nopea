@@ -40,7 +40,7 @@ defmodule Nopea.CLI do
     path = Keyword.get(opts, :file) || "."
     service = Keyword.get(opts, :service) || Path.basename(path)
     namespace = Keyword.get(opts, :namespace, "default")
-    strategy = parse_strategy(Keyword.get(opts, :strategy))
+    strategy = Nopea.Helpers.parse_strategy(Keyword.get(opts, :strategy))
 
     case Nopea.Deploy.Spec.from_path(path, service, namespace, strategy: strategy) do
       {:ok, spec} ->
@@ -141,10 +141,4 @@ defmodule Nopea.CLI do
       nopea serve
     """)
   end
-
-  defp parse_strategy("canary"), do: :canary
-  defp parse_strategy("blue_green"), do: :blue_green
-  defp parse_strategy("blue-green"), do: :blue_green
-  defp parse_strategy("direct"), do: :direct
-  defp parse_strategy(_), do: nil
 end

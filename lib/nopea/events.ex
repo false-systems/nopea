@@ -53,7 +53,7 @@ defmodule Nopea.Events do
   @spec new(map()) :: t()
   def new(%{type: type, source: source, subject_id: subject_id, content: content}) do
     %__MODULE__{
-      id: generate_id(),
+      id: Nopea.Helpers.generate_ulid(),
       type: Map.fetch!(@event_type_map, type),
       source: source,
       specversion: @specversion,
@@ -169,13 +169,6 @@ defmodule Nopea.Events do
     }
 
     Jason.encode(json_map)
-  end
-
-  defp generate_id do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
   end
 
   defp normalize_error({type, message}) when is_atom(type) and is_binary(message) do
