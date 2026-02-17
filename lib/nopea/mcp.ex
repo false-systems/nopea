@@ -247,7 +247,7 @@ defmodule Nopea.MCP do
       Enum.any?(context.failure_patterns, fn p -> p.confidence > 0.15 end) ->
         patterns =
           Enum.map_join(context.failure_patterns, ", ", fn p ->
-            "#{p.type} (confidence: #{Float.round(p.confidence, 2)})"
+            "#{p.error} (confidence: #{Float.round(p.confidence, 2)})"
           end)
 
         "Would use canary strategy for #{service}/#{namespace}. " <>
