@@ -102,7 +102,7 @@ defmodule Nopea.Events.Emitter do
     }
 
     if enabled do
-      Logger.info("CDEvents emitter started, endpoint: #{endpoint}")
+      Logger.info("CDEvents emitter started", endpoint: endpoint)
     else
       Logger.debug("CDEvents emitter disabled (no endpoint configured)")
     end
@@ -138,7 +138,7 @@ defmodule Nopea.Events.Emitter do
       {{:value, item}, rest_queue} ->
         case send_event(item.event, state) do
           :ok ->
-            Logger.debug("CDEvent sent: #{item.event.type}")
+            Logger.debug("CDEvent sent", type: item.event.type)
             new_state = %{state | queue: rest_queue, sent_count: state.sent_count + 1}
             schedule_next_process(new_state, 0)
             {:noreply, new_state}
@@ -147,15 +147,20 @@ defmodule Nopea.Events.Emitter do
             new_retry_count = item.retry_count + 1
 
             if new_retry_count > state.max_retries do
-              Logger.warning(
-                "CDEvent dropped after #{state.max_retries} retries: #{inspect(reason)}"
+              Logger.warning("CDEvent dropped after max retries",
+                max_retries: state.max_retries,
+                error: inspect(reason)
               )
 
               new_state = %{state | queue: rest_queue, dropped_count: state.dropped_count + 1}
               schedule_next_process(new_state, 0)
               {:noreply, new_state}
             else
-              Logger.debug("CDEvent send failed, retry #{new_retry_count}: #{inspect(reason)}")
+              Logger.debug("CDEvent send failed, retrying",
+                retry: new_retry_count,
+                error: inspect(reason)
+              )
+
               updated_item = %{item | retry_count: new_retry_count}
               new_state = %{state | queue: :queue.in_r(updated_item, rest_queue)}
               delay = backoff_delay(new_retry_count, state.retry_delay_ms)

@@ -59,8 +59,9 @@ defmodule Nopea.Memory do
     graph = restore_snapshot(opts) || Graph.new()
     timer = schedule_decay()
 
-    Logger.info(
-      "Memory started with #{Graph.node_count(graph)} nodes, #{Graph.relationship_count(graph)} relationships"
+    Logger.info("Memory started",
+      node_count: Graph.node_count(graph),
+      relationship_count: Graph.relationship_count(graph)
     )
 
     {:ok, %__MODULE__{graph: graph, decay_timer: timer}}
@@ -106,7 +107,7 @@ defmodule Nopea.Memory do
     graph = Graph.decay_all(state.graph, @decay_factor)
     timer = schedule_decay()
 
-    Logger.debug("Memory decay applied: #{Graph.node_count(graph)} nodes remaining")
+    Logger.debug("Memory decay applied", node_count: Graph.node_count(graph))
 
     {:noreply, %{state | graph: graph, decay_timer: timer}}
   end

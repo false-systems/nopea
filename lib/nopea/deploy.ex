@@ -19,13 +19,23 @@ defmodule Nopea.Deploy do
     deploy_id = Nopea.Helpers.generate_ulid()
     start_time = System.monotonic_time()
 
-    Logger.info("Deploy started: #{spec.service}/#{spec.namespace} [#{deploy_id}]")
+    Logger.info("Deploy started",
+      service: spec.service,
+      namespace: spec.namespace,
+      deploy_id: deploy_id
+    )
 
     # 1. Get memory context
     context = get_context(spec)
 
     # 2. Select strategy
     strategy = select_strategy(spec, context)
+
+    Logger.info("Strategy selected",
+      service: spec.service,
+      strategy: strategy,
+      auto_selected: is_nil(spec.strategy)
+    )
 
     # 3. Emit start event
     emit_start(spec, deploy_id, strategy)
@@ -43,7 +53,13 @@ defmodule Nopea.Deploy do
         record_outcome(result, context)
         emit_complete(spec, deploy_id, strategy, duration_ms, verified)
 
-        Logger.info("Deploy completed: #{spec.service} [#{deploy_id}] in #{duration_ms}ms")
+        Logger.info("Deploy completed",
+          service: spec.service,
+          deploy_id: deploy_id,
+          duration_ms: duration_ms,
+          verified: verified
+        )
+
         result
 
       {:error, reason} ->
@@ -52,7 +68,13 @@ defmodule Nopea.Deploy do
         record_outcome(result, context)
         emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time)
 
-        Logger.error("Deploy failed: #{spec.service} [#{deploy_id}]: #{inspect(reason)}")
+        Logger.error("Deploy failed",
+          service: spec.service,
+          deploy_id: deploy_id,
+          error: inspect(reason),
+          duration_ms: duration_ms
+        )
+
         result
     end
   end
@@ -94,9 +116,9 @@ defmodule Nopea.Deploy do
   defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
 
   defp execute_strategy(unknown, spec) do
-    Logger.warning("Unknown strategy #{inspect(unknown)}, falling back to direct",
+    Logger.warning("Unknown strategy, falling back to direct",
       service: spec.service,
-      strategy: unknown
+      strategy: inspect(unknown)
     )
 
     Nopea.Strategy.Direct.execute(spec)

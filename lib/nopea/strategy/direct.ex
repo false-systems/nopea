@@ -13,8 +13,10 @@ defmodule Nopea.Strategy.Direct do
   @impl true
   @spec execute(Nopea.Deploy.Spec.t()) :: {:ok, [map()]} | {:error, term()}
   def execute(%Nopea.Deploy.Spec{} = spec) do
-    Logger.info(
-      "Direct deploy: #{spec.service} → #{spec.namespace} (#{length(spec.manifests)} manifests)"
+    Logger.info("Direct deploy",
+      service: spec.service,
+      namespace: spec.namespace,
+      manifest_count: length(spec.manifests)
     )
 
     k8s_module().apply_manifests(spec.manifests, spec.namespace)

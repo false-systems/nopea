@@ -119,7 +119,10 @@ defmodule Nopea.Applier do
   @spec apply_manifests([map()], K8s.Conn.t(), String.t() | nil) ::
           {:ok, [map()]} | {:error, term()}
   def apply_manifests(manifests, conn, target_namespace) do
-    Logger.info("Applying #{length(manifests)} manifests to namespace: #{target_namespace}")
+    Logger.info("Applying manifests",
+      count: length(manifests),
+      namespace: target_namespace
+    )
 
     results =
       manifests
@@ -154,19 +157,19 @@ defmodule Nopea.Applier do
         end
 
       key = resource_key(manifest)
-      Logger.debug("Applying resource: #{key}")
+      Logger.debug("Applying resource", resource: key)
 
       # Use server-side apply (K8s 1.18+)
       operation = K8s.Client.apply(manifest, field_manager: "nopea", force: true)
 
       case K8s.Client.run(conn, operation) do
         {:ok, result} ->
-          Logger.info("Applied: #{key}")
+          Logger.info("Applied resource", resource: key)
           # Return the actual applied resource (includes K8s defaults)
           {:ok, result}
 
         {:error, reason} = error ->
-          Logger.error("Failed to apply #{key}: #{inspect(reason)}")
+          Logger.error("Failed to apply resource", resource: key, error: inspect(reason))
           error
       end
     end
@@ -177,7 +180,7 @@ defmodule Nopea.Applier do
   """
   @spec read_manifests_from_path(String.t()) :: {:ok, [map()]} | {:error, term()}
   def read_manifests_from_path(path) do
-    Logger.debug("Reading manifests from: #{path}")
+    Logger.debug("Reading manifests from path", path: path)
 
     yaml_files =
       Path.join(path, "**/*.{yaml,yml}")
@@ -185,7 +188,7 @@ defmodule Nopea.Applier do
       |> Enum.sort()
 
     if Enum.empty?(yaml_files) do
-      Logger.warning("No YAML files found in: #{path}")
+      Logger.warning("No YAML files found", path: path)
       {:ok, []}
     else
       collect_manifests(yaml_files)
