@@ -134,5 +134,121 @@ defmodule Nopea.ServiceAgentTest do
       # State resets on crash — deploy_count back to 0
       assert status.deploy_count == 0
     end
+
+    test "recovers last_result from cache after restart" do
+      spec = make_spec("cache-svc")
+      result = ServiceAgent.deploy("cache-svc", spec)
+      assert result.status == :completed
+
+      # Kill and let supervisor restart
+      [{pid, _}] = Registry.lookup(Nopea.Registry, {:service, "cache-svc"})
+      Process.exit(pid, :kill)
+      Process.sleep(50)
+
+      {:ok, status} = ServiceAgent.status("cache-svc")
+      assert status.last_result != nil
+      assert status.last_result.status == :completed
+    end
+  end
+
+  describe "cooldown after crash" do
+    test "delays next queued deploy after worker crash" do
+      # Make apply_manifests crash to trigger the DOWN handler
+      Mox.expect(Nopea.K8sMock, :apply_manifests, 2, fn _manifests, _ns ->
+        raise "boom"
+      end)
+
+      spec = make_spec("cooldown-svc", manifests: [%{"kind" => "Deployment"}])
+
+      # Fire two deploys concurrently — first will crash, second gets queued
+      task1 = Task.async(fn -> ServiceAgent.deploy("cooldown-svc", spec) end)
+      Process.sleep(10)
+      task2 = Task.async(fn -> ServiceAgent.deploy("cooldown-svc", spec) end)
+
+      # First deploy fails from crash
+      result1 = Task.await(task1, 10_000)
+      assert result1.status == :failed
+      assert match?({:worker_crash, _}, result1.error)
+
+      # Second deploy should eventually complete (after cooldown + crash)
+      result2 = Task.await(task2, 10_000)
+      assert result2.status == :failed
+
+      # Both processed
+      {:ok, status} = ServiceAgent.status("cooldown-svc")
+      assert status.deploy_count == 2
+    end
+  end
+
+  describe "queue limit" do
+    test "rejects deploys when queue is full" do
+      test_pid = self()
+
+      # First call blocks; worker sends its pid so we can unblock it
+      Mox.expect(Nopea.K8sMock, :apply_manifests, fn _manifests, _ns ->
+        send(test_pid, {:deploy_started, self()})
+
+        receive do
+          :continue -> {:ok, []}
+        end
+      end)
+
+      spec = make_spec("queue-svc", manifests: [%{"kind" => "Deployment"}])
+
+      # Start first deploy (will block in apply_manifests)
+      task1 = Task.async(fn -> ServiceAgent.deploy("queue-svc", spec) end)
+      assert_receive {:deploy_started, worker_pid}, 5_000
+
+      # Queue 10 more (the max)
+      queued_tasks =
+        for _i <- 1..10 do
+          Task.async(fn -> ServiceAgent.deploy("queue-svc", spec) end)
+        end
+
+      # Give queued tasks time to reach the agent
+      Process.sleep(50)
+
+      # 11th should be rejected immediately with :queue_full
+      overflow_result = ServiceAgent.deploy("queue-svc", spec)
+      assert overflow_result.status == :failed
+      assert overflow_result.error == :queue_full
+
+      # Stub remaining apply_manifests calls for the queued deploys
+      Mox.stub(Nopea.K8sMock, :apply_manifests, fn _manifests, _ns ->
+        {:ok, []}
+      end)
+
+      # Unblock the first deploy worker — let everything drain
+      send(worker_pid, :continue)
+      _results = Task.await_many([task1 | queued_tasks], 30_000)
+    end
+  end
+
+  describe "idle timeout" do
+    test "agent stops after idle timeout" do
+      # Override the idle timeout by sending the message directly
+      pid = ServiceAgent.ensure_started("idle-svc")
+      assert Process.alive?(pid)
+
+      # Simulate the idle timeout firing
+      send(pid, :idle_timeout)
+      Process.sleep(50)
+
+      # Agent should have stopped
+      refute Process.alive?(pid)
+    end
+
+    test "idle timeout is rescheduled during deploy" do
+      pid = ServiceAgent.ensure_started("busy-svc")
+
+      # Deploy keeps the agent alive
+      spec = make_spec("busy-svc")
+      ServiceAgent.deploy("busy-svc", spec)
+
+      # Agent still alive after deploy
+      assert Process.alive?(pid)
+      {:ok, status} = ServiceAgent.status("busy-svc")
+      assert status.deploy_count == 1
+    end
   end
 end

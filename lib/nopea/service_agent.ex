@@ -23,10 +23,13 @@ defmodule Nopea.ServiceAgent do
   alias Nopea.Deploy.{Spec, Result}
 
   @crash_cooldown_ms 2_000
+  @idle_timeout_ms :timer.minutes(30)
+  @max_queue_size 10
 
   defstruct [
     :service,
     :current_deploy,
+    :idle_timer,
     queue: :queue.new(),
     deploy_count: 0,
     last_result: nil,
@@ -36,6 +39,7 @@ defmodule Nopea.ServiceAgent do
   @type t :: %__MODULE__{
           service: String.t(),
           current_deploy: map() | nil,
+          idle_timer: reference() | nil,
           queue: :queue.queue(),
           deploy_count: non_neg_integer(),
           last_result: Result.t() | nil,
@@ -123,21 +127,9 @@ defmodule Nopea.ServiceAgent do
 
     state = %__MODULE__{service: service}
 
-    # Recover last known state from cache if available
-    state =
-      if Nopea.Cache.available?() do
-        case Nopea.Cache.get_service_state(service) do
-          {:ok, cached} ->
-            %{state | last_result: cached[:last_result]}
+    state = recover_from_cache(state, service)
 
-          {:error, :not_found} ->
-            state
-        end
-      else
-        state
-      end
-
-    {:ok, state}
+    {:ok, schedule_idle_timeout(state)}
   end
 
   @impl true
@@ -147,8 +139,21 @@ defmodule Nopea.ServiceAgent do
   end
 
   def handle_call({:deploy, spec}, from, %{status: :deploying} = state) do
-    queue = :queue.in({spec, from}, state.queue)
-    {:noreply, %{state | queue: queue}}
+    if :queue.len(state.queue) >= @max_queue_size do
+      result =
+        Result.failure(
+          Nopea.Helpers.generate_ulid(),
+          spec,
+          spec.strategy || :direct,
+          :queue_full,
+          0
+        )
+
+      {:reply, result, state}
+    else
+      queue = :queue.in({spec, from}, state.queue)
+      {:noreply, %{state | queue: queue}}
+    end
   end
 
   def handle_call(:status, _from, state) do
@@ -187,9 +192,20 @@ defmodule Nopea.ServiceAgent do
     {:noreply, state}
   end
 
+  def handle_info(:idle_timeout, %{status: :idle} = state) do
+    Logger.info("ServiceAgent idle timeout, shutting down", service: state.service)
+    {:stop, :normal, state}
+  end
+
+  def handle_info(:idle_timeout, state) do
+    # Currently deploying — reschedule
+    {:noreply, schedule_idle_timeout(state)}
+  end
+
   # Deploy execution
 
   defp start_deploy(spec, from, state) do
+    state = cancel_idle_timer(state)
     deploy_id = Nopea.Helpers.generate_ulid()
     parent = self()
 
@@ -278,11 +294,46 @@ defmodule Nopea.ServiceAgent do
         state
 
       {:empty, _} ->
-        state
+        schedule_idle_timeout(state)
     end
   end
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
+  end
+
+  defp schedule_idle_timeout(state) do
+    state = cancel_idle_timer(state)
+    timer = Process.send_after(self(), :idle_timeout, @idle_timeout_ms)
+    %{state | idle_timer: timer}
+  end
+
+  defp cancel_idle_timer(%{idle_timer: nil} = state), do: state
+
+  defp cancel_idle_timer(%{idle_timer: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | idle_timer: nil}
+  end
+
+  defp recover_from_cache(state, service) do
+    if Nopea.Cache.available?() do
+      case Nopea.Cache.get_service_state(service) do
+        {:ok, cached} ->
+          last_result =
+            with deploy_id when is_binary(deploy_id) <- cached[:last_deploy],
+                 {:ok, data} <- Nopea.Cache.get_deployment(service, deploy_id) do
+              struct(Result, data)
+            else
+              _ -> nil
+            end
+
+          %{state | last_result: last_result}
+
+        {:error, :not_found} ->
+          state
+      end
+    else
+      state
+    end
   end
 end
