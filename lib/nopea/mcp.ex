@@ -70,6 +70,21 @@ defmodule Nopea.MCP do
       }
     },
     %{
+      "name" => "nopea_health",
+      "description" =>
+        "Check health of active service agents. Without args: lists all agents. With service: returns specific agent status.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "service" => %{
+            "type" => "string",
+            "description" => "Optional service name. Omit to list all agents."
+          }
+        },
+        "required" => []
+      }
+    },
+    %{
       "name" => "nopea_explain",
       "description" =>
         "Explain why a deployment strategy would be selected for a service based on memory context.",
@@ -203,7 +218,7 @@ defmodule Nopea.MCP do
         strategy: Nopea.Helpers.parse_strategy(args["strategy"])
       }
 
-      result = Nopea.Deploy.run(spec)
+      result = Nopea.Deploy.deploy(spec)
       {:ok, Jason.encode!(Nopea.Helpers.serialize_deploy_result(result), pretty: true)}
     end
   rescue
@@ -215,6 +230,23 @@ defmodule Nopea.MCP do
       )
 
       {:error, "Deploy failed: #{Exception.message(e)}"}
+  end
+
+  defp call_tool("nopea_health", args) do
+    case args["service"] do
+      nil ->
+        agents = Nopea.ServiceAgent.health()
+        {:ok, Jason.encode!(%{agents: agents, count: length(agents)}, pretty: true)}
+
+      service ->
+        case Nopea.ServiceAgent.status(service) do
+          {:ok, status} ->
+            {:ok, Jason.encode!(status, pretty: true)}
+
+          {:error, :not_found} ->
+            {:ok, Jason.encode!(%{service: service, message: "No active agent"}, pretty: true)}
+        end
+    end
   end
 
   defp call_tool("nopea_explain", args) do
