@@ -30,9 +30,6 @@ defmodule Nopea.MixProject do
       # K8s client
       {:k8s, "~> 2.6"},
 
-      # Knowledge graph
-      {:kerto, path: "../kerto"},
-
       # Distributed Erlang clustering
       {:libcluster, "~> 3.3"},
       {:horde, "~> 0.9"},

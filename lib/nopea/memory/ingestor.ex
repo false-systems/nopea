@@ -1,6 +1,6 @@
 defmodule Nopea.Memory.Ingestor do
   @moduledoc """
-  Transforms deployment events into KERTO graph operations.
+  Transforms deployment events into knowledge graph operations.
 
   Converts deploy results (success/failure/rollback) into
   graph nodes and relationships that build deployment memory.
@@ -8,7 +8,7 @@ defmodule Nopea.Memory.Ingestor do
 
   require Logger
 
-  alias Kerto.Graph.Graph
+  alias Nopea.Graph.Graph
 
   @spec ingest(Graph.t(), map()) :: Graph.t()
   def ingest(graph, %{service: service, namespace: namespace, status: status} = result) do
@@ -22,8 +22,8 @@ defmodule Nopea.Memory.Ingestor do
     {graph, _node} = Graph.upsert_node(graph, :concept, "namespace:#{namespace}", 0.5, ulid)
 
     # Service → deployed_to → namespace
-    service_id = Kerto.Graph.Identity.compute_id(:concept, service)
-    ns_id = Kerto.Graph.Identity.compute_id(:concept, "namespace:#{namespace}")
+    service_id = Nopea.Graph.Identity.compute_id(:concept, service)
+    ns_id = Nopea.Graph.Identity.compute_id(:concept, "namespace:#{namespace}")
 
     {graph, _rel} =
       Graph.upsert_relationship(
@@ -61,8 +61,8 @@ defmodule Nopea.Memory.Ingestor do
 
     {graph, _node} = Graph.upsert_node(graph, :error, error_name, 0.8, ulid)
 
-    service_id = Kerto.Graph.Identity.compute_id(:concept, service)
-    error_id = Kerto.Graph.Identity.compute_id(:error, error_name)
+    service_id = Nopea.Graph.Identity.compute_id(:concept, service)
+    error_id = Nopea.Graph.Identity.compute_id(:error, error_name)
 
     {graph, _rel} =
       Graph.upsert_relationship(

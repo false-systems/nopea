@@ -1,6 +1,6 @@
 defmodule Nopea.Memory do
   @moduledoc """
-  GenServer wrapping a KERTO knowledge graph for deployment memory.
+  GenServer wrapping a knowledge graph for deployment memory.
 
   Maintains an in-memory graph that learns from every deployment:
   - Services and their deployment history
@@ -14,7 +14,7 @@ defmodule Nopea.Memory do
   use GenServer
   require Logger
 
-  alias Kerto.Graph.Graph
+  alias Nopea.Graph.Graph
 
   defstruct [:graph, :decay_timer]
 

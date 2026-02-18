@@ -1,7 +1,7 @@
 defmodule Nopea.Memory.QueryTest do
   use ExUnit.Case, async: true
 
-  alias Kerto.Graph.{Graph, Identity}
+  alias Nopea.Graph.{Graph, Identity}
   alias Nopea.Memory.{Ingestor, Query}
 
   defp build_graph_with_history do
