@@ -29,7 +29,7 @@ defmodule Nopea.Occurrence do
 
     occurrence = %{
       "version" => @occurrence_version,
-      "id" => generate_id(),
+      "id" => Nopea.Helpers.generate_ulid(),
       "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "source" => "nopea",
       "type" => "deploy.run.#{type_suffix}",
@@ -52,20 +52,17 @@ defmodule Nopea.Occurrence do
   @spec persist(map(), String.t()) :: :ok | {:error, term()}
   def persist(occurrence, workdir) do
     dir = Path.join(workdir, ".nopea")
+    etf_dir = Path.join(dir, "occurrences")
 
-    with :ok <- File.mkdir_p(dir) do
-      # JSON — cold path for AI/external consumers
-      json_path = Path.join(dir, "occurrence.json")
-      json = Jason.encode!(occurrence, pretty: true)
-      :ok = File.write(json_path, json)
-
-      # ETF — warm path for fast reload
-      etf_dir = Path.join(dir, "occurrences")
-      File.mkdir_p!(etf_dir)
-      filename = "#{occurrence["id"]}.etf"
-      etf_path = Path.join(etf_dir, filename)
-      File.write!(etf_path, :erlang.term_to_binary(occurrence))
-
+    with {:ok, json} <- Jason.encode(occurrence, pretty: true),
+         :ok <- File.mkdir_p(dir),
+         :ok <- File.write(Path.join(dir, "occurrence.json"), json),
+         :ok <- File.mkdir_p(etf_dir),
+         :ok <-
+           File.write(
+             Path.join(etf_dir, "#{occurrence["id"]}.etf"),
+             :erlang.term_to_binary(occurrence)
+           ) do
       :ok
     end
   end
@@ -211,10 +208,10 @@ defmodule Nopea.Occurrence do
       "service" => result.service,
       "namespace" => result.namespace,
       "strategy" => Atom.to_string(result.strategy),
-      "manifests_applied" => result[:manifests_applied] || 0,
-      "verified" => result[:verified] || false
+      "manifests_applied" => Map.get(result, :manifests_applied, 0),
+      "verified" => Map.get(result, :verified, false)
     }
-    |> maybe_add("deploy_id", result[:deploy_id])
+    |> maybe_add("deploy_id", Map.get(result, :deploy_id))
   end
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -241,13 +238,6 @@ defmodule Nopea.Occurrence do
   defp status_impact(:failed, _), do: "service may be partially updated"
   defp status_impact(:rolledback, _), do: "rolled back to previous version"
   defp status_impact(_, _), do: "deployment incomplete"
-
-  defp generate_id do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
-  end
 
   defp maybe_add(map, _key, nil), do: map
   defp maybe_add(map, key, value), do: Map.put(map, key, value)

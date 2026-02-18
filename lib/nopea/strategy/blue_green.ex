@@ -33,9 +33,11 @@ defmodule Nopea.Strategy.BlueGreen do
     active = active_slot(spec.options)
     target = inactive_slot(active)
 
-    Logger.info(
-      "Blue-green deploy: #{spec.service} → #{spec.namespace} " <>
-        "(active: #{active}, deploying to: #{target})"
+    Logger.info("Blue-green deploy",
+      service: spec.service,
+      namespace: spec.namespace,
+      active_slot: active,
+      target_slot: target
     )
 
     # Currently applies directly. When Service selector switching

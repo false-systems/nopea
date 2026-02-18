@@ -100,8 +100,7 @@ defmodule Nopea.EventsTest do
         {:deploy_started, "dev.cdevents.deployment.started.0.1.0"},
         {:deploy_completed, "dev.cdevents.deployment.completed.0.1.0"},
         {:deploy_failed, "dev.cdevents.deployment.failed.0.1.0"},
-        {:service_deployed, "dev.cdevents.service.deployed.0.3.0"},
-        {:service_upgraded, "dev.cdevents.service.upgraded.0.3.0"}
+        {:service_deployed, "dev.cdevents.service.deployed.0.3.0"}
       ]
 
       for {atom_type, expected} <- types do

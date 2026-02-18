@@ -26,7 +26,8 @@ defmodule Nopea.K8s do
     end
   end
 
-  @spec apply_manifest(map(), String.t() | nil) :: :ok | {:error, term()}
+  @impl true
+  @spec apply_manifest(map(), String.t() | nil) :: {:ok, map()} | {:error, term()}
   def apply_manifest(manifest, target_namespace \\ nil) do
     with {:ok, conn} <- conn() do
       Nopea.Applier.apply_single(manifest, conn, target_namespace)
@@ -51,6 +52,7 @@ defmodule Nopea.K8s do
     end
   end
 
+  @impl true
   @spec delete_resource(String.t(), String.t(), String.t(), String.t()) ::
           :ok | {:error, term()}
   def delete_resource(api_version, kind, name, namespace) do

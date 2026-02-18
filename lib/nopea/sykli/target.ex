@@ -66,6 +66,13 @@ defmodule Nopea.SYKLI.Target do
       :failed -> {:error, result.error}
     end
   rescue
-    e -> {:error, Exception.message(e)}
+    e ->
+      Logger.error("SYKLI task execution failed",
+        service: Map.get(task, :service),
+        error: Exception.message(e),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      {:error, Exception.message(e)}
   end
 end

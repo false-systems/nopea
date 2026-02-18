@@ -10,14 +10,4 @@ defmodule Nopea.K8sTest do
       assert is_struct(conn)
     end
   end
-
-  # Integration tests require a K8s cluster
-  @moduletag :k8s_integration
-
-  describe "apply_manifest/2 integration" do
-    @tag :k8s_integration
-    test "requires a cluster" do
-      :ok
-    end
-  end
 end

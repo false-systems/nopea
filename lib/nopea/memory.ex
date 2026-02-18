@@ -59,8 +59,9 @@ defmodule Nopea.Memory do
     graph = restore_snapshot(opts) || Graph.new()
     timer = schedule_decay()
 
-    Logger.info(
-      "Memory started with #{Graph.node_count(graph)} nodes, #{Graph.relationship_count(graph)} relationships"
+    Logger.info("Memory started",
+      node_count: Graph.node_count(graph),
+      relationship_count: Graph.relationship_count(graph)
     )
 
     {:ok, %__MODULE__{graph: graph, decay_timer: timer}}
@@ -86,9 +87,19 @@ defmodule Nopea.Memory do
 
   @impl true
   def handle_cast({:record_deploy, deploy_result}, state) do
-    graph = Nopea.Memory.Ingestor.ingest(state.graph, deploy_result)
-    snapshot_graph(graph)
-    {:noreply, %{state | graph: graph}}
+    try do
+      graph = Nopea.Memory.Ingestor.ingest(state.graph, deploy_result)
+      snapshot_graph(graph)
+      {:noreply, %{state | graph: graph}}
+    rescue
+      error ->
+        Logger.error("Ingestor failed, preserving existing graph state",
+          error: inspect(error),
+          stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+        )
+
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -96,7 +107,7 @@ defmodule Nopea.Memory do
     graph = Graph.decay_all(state.graph, @decay_factor)
     timer = schedule_decay()
 
-    Logger.debug("Memory decay applied: #{Graph.node_count(graph)} nodes remaining")
+    Logger.debug("Memory decay applied", node_count: Graph.node_count(graph))
 
     {:noreply, %{state | graph: graph, decay_timer: timer}}
   end
@@ -111,9 +122,15 @@ defmodule Nopea.Memory do
     case Nopea.Cache.available?() && Nopea.Cache.get_graph_snapshot() do
       {:ok, binary} ->
         try do
-          :erlang.binary_to_term(binary)
+          :erlang.binary_to_term(binary, [:safe])
         rescue
-          _ -> nil
+          error ->
+            Logger.warning("Failed to restore graph snapshot",
+              error: inspect(error),
+              stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+            )
+
+            nil
         end
 
       _ ->

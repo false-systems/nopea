@@ -10,9 +10,7 @@ defmodule Nopea.Events do
   - `:deploy_started` - Deployment initiated
   - `:deploy_completed` - Deployment succeeded
   - `:deploy_failed` - Deployment failed
-  - `:deploy_rolledback` - Deployment rolled back
   - `:service_deployed` - Service first deployed
-  - `:service_upgraded` - Service updated
   """
 
   @specversion "1.0"
@@ -21,9 +19,7 @@ defmodule Nopea.Events do
           :deploy_started
           | :deploy_completed
           | :deploy_failed
-          | :deploy_rolledback
           | :service_deployed
-          | :service_upgraded
 
   @type subject :: %{
           id: String.t(),
@@ -45,15 +41,13 @@ defmodule Nopea.Events do
     deploy_started: "dev.cdevents.deployment.started.0.1.0",
     deploy_completed: "dev.cdevents.deployment.completed.0.1.0",
     deploy_failed: "dev.cdevents.deployment.failed.0.1.0",
-    deploy_rolledback: "dev.cdevents.deployment.rolledback.0.1.0",
-    service_deployed: "dev.cdevents.service.deployed.0.3.0",
-    service_upgraded: "dev.cdevents.service.upgraded.0.3.0"
+    service_deployed: "dev.cdevents.service.deployed.0.3.0"
   }
 
   @spec new(map()) :: t()
   def new(%{type: type, source: source, subject_id: subject_id, content: content}) do
     %__MODULE__{
-      id: generate_id(),
+      id: Nopea.Helpers.generate_ulid(),
       type: Map.fetch!(@event_type_map, type),
       source: source,
       specversion: @specversion,
@@ -114,20 +108,6 @@ defmodule Nopea.Events do
     })
   end
 
-  @spec deploy_rolledback(String.t(), map()) :: t()
-  def deploy_rolledback(service, opts) do
-    new(%{
-      type: :deploy_rolledback,
-      source: "/nopea/deploy/#{service}",
-      subject_id: service,
-      content: %{
-        deploy_id: opts[:deploy_id],
-        namespace: opts[:namespace],
-        reason: opts[:reason]
-      }
-    })
-  end
-
   @spec service_deployed(String.t(), map()) :: t()
   def service_deployed(service, opts) do
     new(%{
@@ -137,20 +117,6 @@ defmodule Nopea.Events do
       content: %{
         environment: %{id: Map.get(opts, :namespace, "default"), source: "/nopea"},
         artifactId: opts[:commit] && "pkg:deploy/#{service}@#{opts[:commit]}",
-        manifest_count: opts[:manifest_count],
-        duration_ms: opts[:duration_ms]
-      }
-    })
-  end
-
-  @spec service_upgraded(String.t(), map()) :: t()
-  def service_upgraded(service, opts) do
-    new(%{
-      type: :service_upgraded,
-      source: "/nopea/deploy/#{service}",
-      subject_id: service,
-      content: %{
-        environment: %{id: Map.get(opts, :namespace, "default"), source: "/nopea"},
         manifest_count: opts[:manifest_count],
         duration_ms: opts[:duration_ms]
       }
@@ -169,13 +135,6 @@ defmodule Nopea.Events do
     }
 
     Jason.encode(json_map)
-  end
-
-  defp generate_id do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
   end
 
   defp normalize_error({type, message}) when is_atom(type) and is_binary(message) do

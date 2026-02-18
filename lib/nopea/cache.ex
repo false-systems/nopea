@@ -21,7 +21,10 @@ defmodule Nopea.Cache do
 
   @spec available?() :: boolean()
   def available? do
-    :ets.whereis(@deployments_table) != :undefined
+    :ets.whereis(@deployments_table) != :undefined and
+      :ets.whereis(@service_state_table) != :undefined and
+      :ets.whereis(@graph_snapshot_table) != :undefined and
+      :ets.whereis(@last_applied_table) != :undefined
   end
 
   def start_link(opts \\ []) do

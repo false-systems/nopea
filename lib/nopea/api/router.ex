@@ -6,6 +6,7 @@ defmodule Nopea.API.Router do
   """
 
   use Plug.Router
+  require Logger
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -76,27 +77,23 @@ defmodule Nopea.API.Router do
           service: service,
           namespace: params["namespace"] || "default",
           manifests: params["manifests"] || [],
-          strategy: parse_strategy(params["strategy"])
+          strategy: Nopea.Helpers.parse_strategy(params["strategy"])
         }
 
         result = Nopea.Deploy.run(spec)
-
-        json(conn, 200, %{
-          deploy_id: result.deploy_id,
-          status: result.status,
-          service: result.service,
-          namespace: result.namespace,
-          strategy: result.strategy,
-          duration_ms: result.duration_ms,
-          manifest_count: result.manifest_count
-        })
+        json(conn, 200, Nopea.Helpers.serialize_deploy_result(result))
 
       _ ->
         json(conn, 400, %{error: "service is required"})
     end
   rescue
     e ->
-      json(conn, 500, %{error: Exception.message(e)})
+      Logger.error("Deploy request failed",
+        error: Exception.message(e),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      json(conn, 500, %{error: "Internal server error"})
   end
 
   defp json(conn, status, body) do
@@ -104,9 +101,4 @@ defmodule Nopea.API.Router do
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(body))
   end
-
-  defp parse_strategy("canary"), do: :canary
-  defp parse_strategy("blue_green"), do: :blue_green
-  defp parse_strategy("direct"), do: :direct
-  defp parse_strategy(_), do: nil
 end

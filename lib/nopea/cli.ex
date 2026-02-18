@@ -40,7 +40,7 @@ defmodule Nopea.CLI do
     path = Keyword.get(opts, :file) || "."
     service = Keyword.get(opts, :service) || Path.basename(path)
     namespace = Keyword.get(opts, :namespace, "default")
-    strategy = parse_strategy(Keyword.get(opts, :strategy))
+    strategy = Nopea.Helpers.parse_strategy(Keyword.get(opts, :strategy))
 
     case Nopea.Deploy.Spec.from_path(path, service, namespace, strategy: strategy) do
       {:ok, spec} ->
@@ -99,7 +99,19 @@ defmodule Nopea.CLI do
 
   defp serve(_opts) do
     IO.puts("Starting Nopea daemon...")
-    Application.put_env(:nopea, :enable_router, true)
+
+    case Supervisor.start_child(Nopea.AppSupervisor, Nopea.API.Router) do
+      {:ok, _pid} ->
+        port = Application.get_env(:nopea, :api_port, 4000)
+        IO.puts("Nopea API listening on port #{port}")
+
+      {:error, {:already_started, _pid}} ->
+        IO.puts("Nopea API already running")
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Failed to start API: #{inspect(reason)}")
+    end
+
     Process.sleep(:infinity)
   end
 
@@ -129,10 +141,4 @@ defmodule Nopea.CLI do
       nopea serve
     """)
   end
-
-  defp parse_strategy("canary"), do: :canary
-  defp parse_strategy("blue_green"), do: :blue_green
-  defp parse_strategy("blue-green"), do: :blue_green
-  defp parse_strategy("direct"), do: :direct
-  defp parse_strategy(_), do: nil
 end

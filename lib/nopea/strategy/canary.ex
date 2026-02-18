@@ -32,7 +32,12 @@ defmodule Nopea.Strategy.Canary do
   @spec execute(Nopea.Deploy.Spec.t()) :: {:ok, [map()]} | {:error, term()}
   def execute(%Nopea.Deploy.Spec{} = spec) do
     steps = canary_steps(spec.options)
-    Logger.info("Canary deploy: #{spec.service} → #{spec.namespace} (steps: #{inspect(steps)})")
+
+    Logger.info("Canary deploy",
+      service: spec.service,
+      namespace: spec.namespace,
+      steps: inspect(steps)
+    )
 
     # Currently applies directly. When Gateway API support is added,
     # this will iterate through canary_steps with verification.

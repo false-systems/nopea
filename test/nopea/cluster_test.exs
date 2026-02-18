@@ -6,7 +6,7 @@ defmodule Nopea.ClusterTest do
   In tests, we verify the topology configuration is valid.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Nopea.Cluster
 

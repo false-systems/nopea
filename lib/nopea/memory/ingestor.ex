@@ -6,11 +6,13 @@ defmodule Nopea.Memory.Ingestor do
   graph nodes and relationships that build deployment memory.
   """
 
+  require Logger
+
   alias Kerto.Graph.Graph
 
   @spec ingest(Graph.t(), map()) :: Graph.t()
   def ingest(graph, %{service: service, namespace: namespace, status: status} = result) do
-    ulid = generate_ulid()
+    ulid = Nopea.Helpers.generate_ulid()
     confidence = status_confidence(status)
 
     # Upsert service node
@@ -27,7 +29,7 @@ defmodule Nopea.Memory.Ingestor do
       Graph.upsert_relationship(
         graph,
         service_id,
-        :depends_on,
+        :deployed_to,
         ns_id,
         confidence,
         ulid,
@@ -43,7 +45,15 @@ defmodule Nopea.Memory.Ingestor do
     graph
   end
 
-  def ingest(graph, _unknown), do: graph
+  def ingest(graph, unknown) when is_map(unknown) do
+    Logger.warning("Unrecognized deploy result format", keys: Map.keys(unknown))
+    graph
+  end
+
+  def ingest(graph, _unknown) do
+    Logger.warning("Unrecognized deploy result: not a map")
+    graph
+  end
 
   defp maybe_record_failure(graph, %{status: :failed, error: error, service: service}, ulid)
        when not is_nil(error) do
@@ -87,11 +97,4 @@ defmodule Nopea.Memory.Ingestor do
   defp normalize_error_name({type, _msg}) when is_atom(type), do: Atom.to_string(type)
   defp normalize_error_name(error) when is_binary(error), do: error
   defp normalize_error_name(error), do: inspect(error)
-
-  defp generate_ulid do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
-  end
 end

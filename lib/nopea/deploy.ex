@@ -16,16 +16,26 @@ defmodule Nopea.Deploy do
 
   @spec run(Spec.t()) :: Result.t()
   def run(%Spec{} = spec) do
-    deploy_id = generate_deploy_id()
+    deploy_id = Nopea.Helpers.generate_ulid()
     start_time = System.monotonic_time()
 
-    Logger.info("Deploy started: #{spec.service}/#{spec.namespace} [#{deploy_id}]")
+    Logger.info("Deploy started",
+      service: spec.service,
+      namespace: spec.namespace,
+      deploy_id: deploy_id
+    )
 
     # 1. Get memory context
     context = get_context(spec)
 
     # 2. Select strategy
     strategy = select_strategy(spec, context)
+
+    Logger.info("Strategy selected",
+      service: spec.service,
+      strategy: strategy,
+      auto_selected: is_nil(spec.strategy)
+    )
 
     # 3. Emit start event
     emit_start(spec, deploy_id, strategy)
@@ -43,16 +53,28 @@ defmodule Nopea.Deploy do
         record_outcome(result, context)
         emit_complete(spec, deploy_id, strategy, duration_ms, verified)
 
-        Logger.info("Deploy completed: #{spec.service} [#{deploy_id}] in #{duration_ms}ms")
+        Logger.info("Deploy completed",
+          service: spec.service,
+          deploy_id: deploy_id,
+          duration_ms: duration_ms,
+          verified: verified
+        )
+
         result
 
       {:error, reason} ->
         duration_ms = duration_ms(start_time)
         result = Result.failure(deploy_id, spec, strategy, reason, duration_ms)
         record_outcome(result, context)
-        emit_failure(spec, deploy_id, strategy, reason, duration_ms)
+        emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time)
 
-        Logger.error("Deploy failed: #{spec.service} [#{deploy_id}]: #{inspect(reason)}")
+        Logger.error("Deploy failed",
+          service: spec.service,
+          deploy_id: deploy_id,
+          error: inspect(reason),
+          duration_ms: duration_ms
+        )
+
         result
     end
   end
@@ -92,17 +114,33 @@ defmodule Nopea.Deploy do
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
   defp execute_strategy(:canary, spec), do: Nopea.Strategy.Canary.execute(spec)
   defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
-  defp execute_strategy(_, spec), do: Nopea.Strategy.Direct.execute(spec)
+
+  defp execute_strategy(unknown, spec) do
+    Logger.warning("Unknown strategy, falling back to direct",
+      service: spec.service,
+      strategy: inspect(unknown)
+    )
+
+    Nopea.Strategy.Direct.execute(spec)
+  end
 
   defp verify_deploy(spec, applied) when is_list(applied) do
     Enum.all?(applied, fn manifest ->
       case Nopea.Drift.verify_manifest(spec.service, manifest) do
         :no_drift -> true
+        :new_resource -> true
         _ -> false
       end
     end)
   rescue
-    _ -> false
+    error ->
+      Logger.warning("Post-deploy verification failed",
+        service: spec.service,
+        error: inspect(error),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
+
+      false
   end
 
   defp verify_deploy(_spec, _applied), do: false
@@ -160,7 +198,12 @@ defmodule Nopea.Deploy do
     Nopea.Occurrence.persist(occurrence, workdir)
   rescue
     error ->
-      Logger.warning("Failed to generate occurrence: #{inspect(error)}")
+      Logger.error("Failed to generate occurrence",
+        service: result.service,
+        deploy_id: result.deploy_id,
+        error: inspect(error),
+        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
+      )
   end
 
   defp emit_start(spec, deploy_id, strategy) do
@@ -194,8 +237,8 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms) do
-    Nopea.Metrics.emit_deploy_error(System.monotonic_time(), %{
+  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time) do
+    Nopea.Metrics.emit_deploy_error(start_time, %{
       service: spec.service,
       strategy: strategy,
       error: reason
@@ -216,13 +259,6 @@ defmodule Nopea.Deploy do
   end
 
   defp emitter_running?, do: Process.whereis(Nopea.Events.Emitter) != nil
-
-  defp generate_deploy_id do
-    case Process.whereis(Nopea.ULID) do
-      nil -> Nopea.ULID.generate_random()
-      _pid -> Nopea.ULID.generate()
-    end
-  end
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
