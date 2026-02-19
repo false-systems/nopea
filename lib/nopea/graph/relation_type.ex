@@ -7,15 +7,7 @@ defmodule Nopea.Graph.RelationType do
 
   @types [
     :breaks,
-    :caused_by,
-    :triggers,
-    :depends_on,
-    :deployed_to,
-    :part_of,
-    :learned,
-    :decided,
-    :tried_failed,
-    :often_changes_with
+    :deployed_to
   ]
 
   @spec all() :: [atom()]

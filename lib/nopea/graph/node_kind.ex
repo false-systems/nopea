@@ -5,7 +5,7 @@ defmodule Nopea.Graph.NodeKind do
   Value object — immutable, equality by value.
   """
 
-  @kinds [:file, :module, :pattern, :decision, :error, :concept]
+  @kinds [:error, :concept]
 
   @spec all() :: [atom()]
   def all, do: @kinds

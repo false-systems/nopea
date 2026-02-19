@@ -51,7 +51,7 @@ defmodule Nopea.Memory.Query do
   def dependencies(graph, service_id) do
     graph
     |> Graph.neighbors(service_id, :outgoing)
-    |> Enum.filter(fn rel -> rel.relation in [:deployed_to, :depends_on] end)
+    |> Enum.filter(fn rel -> rel.relation == :deployed_to end)
     |> Enum.map(fn rel ->
       case Graph.get_node(graph, rel.target) do
         {:ok, node} ->
