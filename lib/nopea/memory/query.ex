@@ -68,13 +68,10 @@ defmodule Nopea.Memory.Query do
   def recommendations(graph, service_id) do
     failures = failure_patterns(graph, service_id)
 
-    high_risk =
-      failures
-      |> Enum.filter(fn f -> f.confidence > 0.7 and f.observations >= 2 end)
-      |> Enum.map(fn f ->
-        "High failure rate (#{Float.round(f.confidence, 2)}) for #{f.error} — seen #{f.observations} times. Consider canary deployment."
-      end)
-
-    high_risk
+    failures
+    |> Enum.filter(fn f -> f.confidence > 0.7 and f.observations >= 2 end)
+    |> Enum.map(fn f ->
+      "High failure rate (#{Float.round(f.confidence, 2)}) for #{f.error} — seen #{f.observations} times. Deploy with caution."
+    end)
   end
 end

@@ -71,45 +71,21 @@ defmodule Nopea.DeployTest do
       assert state.status == :completed
     end
 
-    test "uses explicit strategy when provided" do
+    test "unsupported strategy falls back to direct" do
       spec = %Spec{
         service: "svc",
         namespace: "default",
         manifests: [],
-        strategy: :blue_green
+        strategy: :canary
       }
 
       result = Deploy.run(spec)
-      assert result.strategy == :blue_green
+      assert result.strategy == :direct
     end
   end
 
   describe "strategy selection" do
-    test "auto-selects canary when memory shows failure patterns" do
-      # First, create a failure pattern in memory
-      Nopea.Memory.record_deploy(%{
-        service: "risky-svc",
-        namespace: "prod",
-        status: :failed,
-        error: "crash"
-      })
-
-      Process.sleep(50)
-
-      # Now deploy without explicit strategy — should auto-select canary
-      spec = %Spec{
-        service: "risky-svc",
-        namespace: "prod",
-        manifests: [],
-        strategy: nil
-      }
-
-      result = Deploy.run(spec)
-      # With failure patterns > 0.15 confidence, should pick canary
-      assert result.strategy == :canary
-    end
-
-    test "uses direct when no failure patterns" do
+    test "always uses direct when no explicit strategy" do
       spec = %Spec{
         service: "clean-svc",
         namespace: "default",

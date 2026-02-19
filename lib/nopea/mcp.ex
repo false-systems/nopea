@@ -39,7 +39,7 @@ defmodule Nopea.MCP do
           "manifests" => %{"type" => "array", "description" => "List of K8s manifest objects"},
           "strategy" => %{
             "type" => "string",
-            "description" => "Deploy strategy: direct, canary, blue_green"
+            "description" => "Deploy strategy: direct"
           }
         },
         "required" => ["service"]
@@ -276,9 +276,9 @@ defmodule Nopea.MCP do
             "#{p.error} (confidence: #{Float.round(p.confidence, 2)})"
           end)
 
-        "Would use canary strategy for #{service}/#{namespace}. " <>
+        "Would use direct strategy for #{service}/#{namespace}. " <>
           "Failure patterns detected: #{patterns}. " <>
-          "Canary deploys gradually to reduce risk."
+          "Consider using Kulta for progressive delivery."
 
       true ->
         "Would use direct strategy for #{service}/#{namespace}. " <>

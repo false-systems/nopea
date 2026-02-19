@@ -114,25 +114,24 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp select_strategy(%Spec{strategy: strategy}, _context) when not is_nil(strategy) do
-    strategy
-  end
+  defp select_strategy(%Spec{strategy: :direct}, _context), do: :direct
+  defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 
-  defp select_strategy(_spec, %{failure_patterns: patterns}) do
-    high_risk = Enum.any?(patterns, fn p -> p.confidence > 0.15 end)
-    if high_risk, do: :canary, else: :direct
-  end
+  defp select_strategy(%Spec{strategy: other}, _context) do
+    Logger.warning("Unsupported strategy, falling back to direct",
+      strategy: inspect(other),
+      hint: "Only :direct is supported. For progressive delivery, use Kulta."
+    )
 
-  defp select_strategy(_spec, _context), do: :direct
+    :direct
+  end
 
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
-  defp execute_strategy(:canary, spec), do: Nopea.Strategy.Canary.execute(spec)
-  defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
 
-  defp execute_strategy(unknown, spec) do
+  defp execute_strategy(other, spec) do
     Logger.warning("Unknown strategy, falling back to direct",
       service: spec.service,
-      strategy: inspect(unknown)
+      strategy: inspect(other)
     )
 
     Nopea.Strategy.Direct.execute(spec)
