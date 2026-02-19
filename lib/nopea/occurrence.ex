@@ -232,9 +232,6 @@ defmodule Nopea.Occurrence do
   defp error_message(nil), do: nil
   defp error_message(other), do: inspect(other)
 
-  defp status_impact(:failed, :canary),
-    do: "canary deployment stopped, traffic still on previous version"
-
   defp status_impact(:failed, _), do: "service may be partially updated"
   defp status_impact(:rolledback, _), do: "rolled back to previous version"
   defp status_impact(_, _), do: "deployment incomplete"

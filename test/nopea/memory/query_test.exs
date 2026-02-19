@@ -181,7 +181,7 @@ defmodule Nopea.Memory.QueryTest do
   end
 
   describe "recommendations/3" do
-    test "recommends canary for high failure rate" do
+    test "warns about high failure rate" do
       graph = Graph.new()
 
       # EWMA starts at 0.5, alpha=0.3. Need ~5 reinforcements at 0.8 to cross 0.7:
@@ -194,7 +194,7 @@ defmodule Nopea.Memory.QueryTest do
       recs = Query.recommendations(graph, service_id)
 
       assert length(recs) >= 1
-      assert Enum.any?(recs, fn r -> String.contains?(r, "canary") end)
+      assert Enum.any?(recs, fn r -> String.contains?(r, "Deploy with caution") end)
     end
 
     test "no recommendations for healthy service" do

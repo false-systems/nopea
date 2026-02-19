@@ -51,7 +51,7 @@ defmodule Nopea.Memory.Query do
   def dependencies(graph, service_id) do
     graph
     |> Graph.neighbors(service_id, :outgoing)
-    |> Enum.filter(fn rel -> rel.relation in [:deployed_to, :depends_on] end)
+    |> Enum.filter(fn rel -> rel.relation == :deployed_to end)
     |> Enum.map(fn rel ->
       case Graph.get_node(graph, rel.target) do
         {:ok, node} ->
@@ -68,13 +68,10 @@ defmodule Nopea.Memory.Query do
   def recommendations(graph, service_id) do
     failures = failure_patterns(graph, service_id)
 
-    high_risk =
-      failures
-      |> Enum.filter(fn f -> f.confidence > 0.7 and f.observations >= 2 end)
-      |> Enum.map(fn f ->
-        "High failure rate (#{Float.round(f.confidence, 2)}) for #{f.error} — seen #{f.observations} times. Consider canary deployment."
-      end)
-
-    high_risk
+    failures
+    |> Enum.filter(fn f -> f.confidence > 0.7 and f.observations >= 2 end)
+    |> Enum.map(fn f ->
+      "High failure rate (#{Float.round(f.confidence, 2)}) for #{f.error} — seen #{f.observations} times. Deploy with caution."
+    end)
   end
 end

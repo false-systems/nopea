@@ -11,8 +11,7 @@ defmodule Nopea.Deploy.Spec do
           manifests: [map()],
           strategy: atom() | nil,
           manifest_path: String.t() | nil,
-          timeout_ms: pos_integer(),
-          options: keyword()
+          timeout_ms: pos_integer()
         }
 
   @enforce_keys [:service, :namespace, :manifests]
@@ -22,8 +21,7 @@ defmodule Nopea.Deploy.Spec do
     :manifests,
     :strategy,
     :manifest_path,
-    timeout_ms: 120_000,
-    options: []
+    timeout_ms: 120_000
   ]
 
   @spec from_map(map()) :: t()

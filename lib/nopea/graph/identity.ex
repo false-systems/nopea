@@ -28,26 +28,10 @@ defmodule Nopea.Graph.Identity do
   @doc """
   Canonicalize a name based on its kind.
 
-  - `:file` — normalize path separators, resolve `..`, strip `./` and trailing `/`
-  - `:pattern`, `:error` — lowercase
-  - `:module`, `:decision`, `:concept` — preserve as-is
+  - `:error` — lowercase
+  - `:concept` — preserve as-is
   """
   @spec canonicalize_name(atom(), String.t()) :: String.t()
-  def canonicalize_name(:file, name) do
-    name
-    |> String.split("/")
-    |> Enum.reduce([], fn
-      ".", acc -> acc
-      "..", [_ | rest] -> rest
-      "..", [] -> []
-      segment, acc -> [segment | acc]
-    end)
-    |> Enum.reverse()
-    |> Enum.join("/")
-    |> String.trim_trailing("/")
-  end
-
-  def canonicalize_name(:pattern, name), do: String.downcase(name)
   def canonicalize_name(:error, name), do: String.downcase(name)
   def canonicalize_name(_kind, name), do: name
 end

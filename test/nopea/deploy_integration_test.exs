@@ -100,42 +100,6 @@ defmodule Nopea.DeployIntegrationTest do
       assert is_list(ctx.failure_patterns)
     end
 
-    test "second deploy auto-selects canary after prior failure" do
-      # First deploy: failure
-      Nopea.K8sMock
-      |> expect(:apply_manifests, fn _manifests, _ns ->
-        {:error, "crash"}
-      end)
-
-      spec =
-        Factory.build_spec(
-          service: "auto-canary-svc",
-          namespace: "prod",
-          manifests: [Factory.sample_deployment_manifest("auto-canary-svc")],
-          strategy: nil
-        )
-
-      Deploy.run(spec)
-      Process.sleep(50)
-
-      # Second deploy: should auto-select canary
-      Nopea.K8sMock
-      |> expect(:apply_manifests, fn _manifests, _ns ->
-        {:ok, []}
-      end)
-
-      spec2 =
-        Factory.build_spec(
-          service: "auto-canary-svc",
-          namespace: "prod",
-          manifests: [],
-          strategy: nil
-        )
-
-      result = Deploy.run(spec2)
-      assert result.strategy == :canary
-    end
-
     test "occurrence file generated with correct structure" do
       Nopea.K8sMock
       |> expect(:apply_manifests, fn _manifests, _ns ->

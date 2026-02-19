@@ -71,45 +71,21 @@ defmodule Nopea.DeployTest do
       assert state.status == :completed
     end
 
-    test "uses explicit strategy when provided" do
+    test "unknown strategy falls back to direct" do
       spec = %Spec{
         service: "svc",
         namespace: "default",
         manifests: [],
-        strategy: :blue_green
+        strategy: :rolling
       }
 
       result = Deploy.run(spec)
-      assert result.strategy == :blue_green
+      assert result.strategy == :direct
     end
   end
 
   describe "strategy selection" do
-    test "auto-selects canary when memory shows failure patterns" do
-      # First, create a failure pattern in memory
-      Nopea.Memory.record_deploy(%{
-        service: "risky-svc",
-        namespace: "prod",
-        status: :failed,
-        error: "crash"
-      })
-
-      Process.sleep(50)
-
-      # Now deploy without explicit strategy — should auto-select canary
-      spec = %Spec{
-        service: "risky-svc",
-        namespace: "prod",
-        manifests: [],
-        strategy: nil
-      }
-
-      result = Deploy.run(spec)
-      # With failure patterns > 0.15 confidence, should pick canary
-      assert result.strategy == :canary
-    end
-
-    test "uses direct when no failure patterns" do
+    test "always uses direct when no explicit strategy" do
       spec = %Spec{
         service: "clean-svc",
         namespace: "default",
@@ -119,6 +95,68 @@ defmodule Nopea.DeployTest do
 
       result = Deploy.run(spec)
       assert result.strategy == :direct
+    end
+  end
+
+  describe "Kulta strategies" do
+    test "canary strategy builds and applies Rollout CRD" do
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("canary-svc", "prod")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "prod" ->
+        assert manifest["apiVersion"] == "kulta.io/v1alpha1"
+        assert manifest["kind"] == "Rollout"
+        assert manifest["spec"]["strategy"]["canary"] != nil
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "canary-svc",
+        namespace: "prod",
+        manifests: [deployment],
+        strategy: :canary
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :completed
+      assert result.strategy == :canary
+    end
+
+    test "blue_green strategy builds and applies Rollout CRD" do
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("bg-svc", "staging")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "staging" ->
+        assert manifest["kind"] == "Rollout"
+        assert manifest["spec"]["strategy"]["blueGreen"] != nil
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "bg-svc",
+        namespace: "staging",
+        manifests: [deployment],
+        strategy: :blue_green
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :completed
+      assert result.strategy == :blue_green
+    end
+
+    test "canary fails gracefully when no Deployment in manifests" do
+      service_manifest = Nopea.Test.Factory.sample_service_manifest("no-deploy-svc")
+
+      spec = %Spec{
+        service: "no-deploy-svc",
+        namespace: "default",
+        manifests: [service_manifest],
+        strategy: :canary
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :failed
+      assert result.error == :no_deployment_found
     end
   end
 
