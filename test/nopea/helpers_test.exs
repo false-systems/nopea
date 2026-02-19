@@ -18,6 +18,18 @@ defmodule Nopea.HelpersTest do
   end
 
   describe "parse_strategy/1" do
+    test "parses canary" do
+      assert Helpers.parse_strategy("canary") == :canary
+    end
+
+    test "parses blue_green with underscore" do
+      assert Helpers.parse_strategy("blue_green") == :blue_green
+    end
+
+    test "parses blue-green with hyphen" do
+      assert Helpers.parse_strategy("blue-green") == :blue_green
+    end
+
     test "parses direct" do
       assert Helpers.parse_strategy("direct") == :direct
     end

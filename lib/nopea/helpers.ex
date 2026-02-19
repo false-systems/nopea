@@ -19,6 +19,9 @@ defmodule Nopea.Helpers do
   """
   @spec parse_strategy(String.t() | nil) :: atom() | nil
   def parse_strategy("direct"), do: :direct
+  def parse_strategy("canary"), do: :canary
+  def parse_strategy("blue_green"), do: :blue_green
+  def parse_strategy("blue-green"), do: :blue_green
   def parse_strategy(_), do: nil
 
   @doc """

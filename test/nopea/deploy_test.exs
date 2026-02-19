@@ -71,12 +71,12 @@ defmodule Nopea.DeployTest do
       assert state.status == :completed
     end
 
-    test "unsupported strategy falls back to direct" do
+    test "unknown strategy falls back to direct" do
       spec = %Spec{
         service: "svc",
         namespace: "default",
         manifests: [],
-        strategy: :canary
+        strategy: :rolling
       }
 
       result = Deploy.run(spec)
@@ -95,6 +95,68 @@ defmodule Nopea.DeployTest do
 
       result = Deploy.run(spec)
       assert result.strategy == :direct
+    end
+  end
+
+  describe "Kulta strategies" do
+    test "canary strategy builds and applies Rollout CRD" do
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("canary-svc", "prod")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "prod" ->
+        assert manifest["apiVersion"] == "kulta.io/v1alpha1"
+        assert manifest["kind"] == "Rollout"
+        assert manifest["spec"]["strategy"]["canary"] != nil
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "canary-svc",
+        namespace: "prod",
+        manifests: [deployment],
+        strategy: :canary
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :completed
+      assert result.strategy == :canary
+    end
+
+    test "blue_green strategy builds and applies Rollout CRD" do
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("bg-svc", "staging")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "staging" ->
+        assert manifest["kind"] == "Rollout"
+        assert manifest["spec"]["strategy"]["blueGreen"] != nil
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "bg-svc",
+        namespace: "staging",
+        manifests: [deployment],
+        strategy: :blue_green
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :completed
+      assert result.strategy == :blue_green
+    end
+
+    test "canary fails gracefully when no Deployment in manifests" do
+      service_manifest = Nopea.Test.Factory.sample_service_manifest("no-deploy-svc")
+
+      spec = %Spec{
+        service: "no-deploy-svc",
+        namespace: "default",
+        manifests: [service_manifest],
+        strategy: :canary
+      }
+
+      result = Deploy.run(spec)
+      assert result.status == :failed
+      assert result.error == :no_deployment_found
     end
   end
 

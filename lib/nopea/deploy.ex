@@ -114,13 +114,16 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp select_strategy(%Spec{strategy: :direct}, _context), do: :direct
+  defp select_strategy(%Spec{strategy: strategy}, _context)
+       when strategy in [:direct, :canary, :blue_green] do
+    strategy
+  end
+
   defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 
   defp select_strategy(%Spec{strategy: other}, _context) do
-    Logger.warning("Unsupported strategy, falling back to direct",
-      strategy: inspect(other),
-      hint: "Only :direct is supported. For progressive delivery, use Kulta."
+    Logger.warning("Unknown strategy, falling back to direct",
+      strategy: inspect(other)
     )
 
     :direct
@@ -128,13 +131,31 @@ defmodule Nopea.Deploy do
 
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
 
+  defp execute_strategy(strategy, spec) when strategy in [:canary, :blue_green] do
+    case Nopea.Kulta.RolloutBuilder.build(spec, strategy) do
+      {:ok, rollout} ->
+        k8s_module().apply_manifest(rollout, spec.namespace)
+        |> case do
+          {:ok, applied} -> {:ok, [applied]}
+          {:error, _} = error -> error
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   defp execute_strategy(other, spec) do
-    Logger.warning("Unknown strategy, falling back to direct",
+    Logger.warning("Unrecognized strategy, falling back to direct",
       service: spec.service,
       strategy: inspect(other)
     )
 
     Nopea.Strategy.Direct.execute(spec)
+  end
+
+  defp k8s_module do
+    Application.get_env(:nopea, :k8s_module, Nopea.K8s)
   end
 
   defp verify_deploy(spec, applied) when is_list(applied) do
