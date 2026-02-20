@@ -28,7 +28,14 @@ defmodule Nopea.Events.EmitterTest do
           http_client: {TestClient, test_pid: self(), response: {:ok, %{status: 202}}}
         )
 
-      event = Events.service_deployed("test-repo", %{commit: "abc123"})
+      event =
+        Events.deploy_started("test-repo", %{
+          deploy_id: "01ABC",
+          strategy: :direct,
+          namespace: "default",
+          manifest_count: 1
+        })
+
       assert :ok = Emitter.emit(pid, event)
 
       # Wait for async processing
@@ -43,9 +50,11 @@ defmodule Nopea.Events.EmitterTest do
         )
 
       event =
-        Events.service_deployed("my-app", %{
-          commit: "abc123",
-          namespace: "production"
+        Events.deploy_started("my-app", %{
+          deploy_id: "01ABC",
+          strategy: :direct,
+          namespace: "production",
+          manifest_count: 3
         })
 
       Emitter.emit(pid, event)
@@ -54,7 +63,7 @@ defmodule Nopea.Events.EmitterTest do
       assert url == "http://events.example.com/cdevents"
 
       decoded = Jason.decode!(body)
-      assert decoded["type"] == "dev.cdevents.service.deployed.0.3.0"
+      assert decoded["type"] == "dev.cdevents.deployment.started.0.1.0"
       assert decoded["source"] == "/nopea/deploy/my-app"
     end
   end
@@ -80,7 +89,14 @@ defmodule Nopea.Events.EmitterTest do
           max_retries: 5
         )
 
-      event = Events.service_deployed("test-repo", %{commit: "abc123"})
+      event =
+        Events.deploy_started("test-repo", %{
+          deploy_id: "01ABC",
+          strategy: :direct,
+          namespace: "default",
+          manifest_count: 1
+        })
+
       Emitter.emit(pid, event)
 
       # Should receive 3 attempts
@@ -98,7 +114,14 @@ defmodule Nopea.Events.EmitterTest do
           max_retries: 2
         )
 
-      event = Events.service_deployed("test-repo", %{commit: "abc123"})
+      event =
+        Events.deploy_started("test-repo", %{
+          deploy_id: "01ABC",
+          strategy: :direct,
+          namespace: "default",
+          manifest_count: 1
+        })
+
       Emitter.emit(pid, event)
 
       # Wait for retries
@@ -113,7 +136,14 @@ defmodule Nopea.Events.EmitterTest do
     test "disabled when endpoint is nil" do
       {:ok, pid} = start_emitter(endpoint: nil)
 
-      event = Events.service_deployed("test-repo", %{commit: "abc123"})
+      event =
+        Events.deploy_started("test-repo", %{
+          deploy_id: "01ABC",
+          strategy: :direct,
+          namespace: "default",
+          manifest_count: 1
+        })
+
       assert :ok = Emitter.emit(pid, event)
 
       state = Emitter.get_state(pid)

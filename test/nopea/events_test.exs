@@ -53,31 +53,11 @@ defmodule Nopea.EventsTest do
     end
   end
 
-  describe "service_deployed/2" do
-    test "creates a service.deployed event" do
-      event =
-        Events.service_deployed("my-app", %{
-          commit: "abc123",
-          namespace: "production",
-          manifest_count: 5
-        })
-
-      assert event.type == "dev.cdevents.service.deployed.0.3.0"
-      assert event.source == "/nopea/deploy/my-app"
-      assert event.subject.content.environment.id == "production"
-    end
-
-    test "uses default namespace" do
-      event = Events.service_deployed("my-app", %{commit: "abc123"})
-      assert event.subject.content.environment.id == "default"
-    end
-  end
-
   describe "CDEvent struct" do
     test "new/1 creates valid event with context fields" do
       event =
         Events.new(%{
-          type: :service_deployed,
+          type: :deploy_started,
           source: "/nopea/deploy/my-app",
           subject_id: "my-app",
           content: %{environment: %{id: "prod"}}
@@ -90,8 +70,8 @@ defmodule Nopea.EventsTest do
     end
 
     test "new/1 generates unique IDs" do
-      e1 = Events.new(%{type: :service_deployed, source: "/test", subject_id: "s", content: %{}})
-      e2 = Events.new(%{type: :service_deployed, source: "/test", subject_id: "s", content: %{}})
+      e1 = Events.new(%{type: :deploy_started, source: "/test", subject_id: "s", content: %{}})
+      e2 = Events.new(%{type: :deploy_started, source: "/test", subject_id: "s", content: %{}})
       refute e1.id == e2.id
     end
 
@@ -99,8 +79,7 @@ defmodule Nopea.EventsTest do
       types = [
         {:deploy_started, "dev.cdevents.deployment.started.0.1.0"},
         {:deploy_completed, "dev.cdevents.deployment.completed.0.1.0"},
-        {:deploy_failed, "dev.cdevents.deployment.failed.0.1.0"},
-        {:service_deployed, "dev.cdevents.service.deployed.0.3.0"}
+        {:deploy_failed, "dev.cdevents.deployment.failed.0.1.0"}
       ]
 
       for {atom_type, expected} <- types do
@@ -114,16 +93,16 @@ defmodule Nopea.EventsTest do
     test "serializes to CloudEvents-compatible JSON" do
       event =
         Events.new(%{
-          type: :service_deployed,
+          type: :deploy_started,
           source: "/nopea/deploy/my-app",
           subject_id: "my-service",
-          content: %{environment: %{id: "prod"}}
+          content: %{strategy: :direct}
         })
 
       {:ok, json} = Events.to_json(event)
       decoded = Jason.decode!(json)
 
-      assert decoded["type"] == "dev.cdevents.service.deployed.0.3.0"
+      assert decoded["type"] == "dev.cdevents.deployment.started.0.1.0"
       assert decoded["source"] == "/nopea/deploy/my-app"
       assert decoded["specversion"] == "1.0"
       assert decoded["subject"]["id"] == "my-service"

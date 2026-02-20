@@ -72,11 +72,6 @@ defmodule Nopea.Graph.Relationship do
     }
   end
 
-  @spec weaken(t(), float()) :: t()
-  def weaken(%__MODULE__{} = rel, factor) when is_float(factor) do
-    %{rel | weight: EWMA.clamp(rel.weight * factor)}
-  end
-
   @spec decay(t(), float()) :: t()
   def decay(%__MODULE__{} = rel, factor \\ 0.95) do
     %{rel | weight: EWMA.decay(rel.weight, factor)}
