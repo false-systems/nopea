@@ -84,62 +84,6 @@ defmodule Nopea.Graph.Graph do
     end)
   end
 
-  @spec subgraph(t(), String.t(), keyword()) :: {[Node.t()], [Relationship.t()]}
-  def subgraph(%__MODULE__{} = graph, root_id, opts \\ []) do
-    depth = Keyword.get(opts, :depth, 1)
-    min_weight = Keyword.get(opts, :min_weight, 0.0)
-
-    case Map.get(graph.nodes, root_id) do
-      nil ->
-        {[], []}
-
-      _root ->
-        {visited, collected_rels} =
-          bfs(graph, [{root_id, 0}], MapSet.new([root_id]), [], depth, min_weight)
-
-        nodes =
-          visited
-          |> MapSet.to_list()
-          |> Enum.map(&Map.fetch!(graph.nodes, &1))
-
-        {nodes, collected_rels}
-    end
-  end
-
-  defp bfs(_graph, [], visited, rels, _max_depth, _min_weight), do: {visited, rels}
-
-  defp bfs(graph, [{node_id, current_depth} | queue], visited, rels, max_depth, min_weight) do
-    if current_depth >= max_depth do
-      bfs(graph, queue, visited, rels, max_depth, min_weight)
-    else
-      adjacent =
-        graph.relationships
-        |> Map.values()
-        |> Enum.filter(fn rel ->
-          (rel.source == node_id or rel.target == node_id) and rel.weight >= min_weight
-        end)
-
-      new_rels = adjacent -- rels
-      rels = Enum.uniq(rels ++ new_rels)
-
-      neighbor_ids =
-        adjacent
-        |> Enum.flat_map(fn rel ->
-          cond do
-            rel.source == node_id -> [rel.target]
-            rel.target == node_id -> [rel.source]
-          end
-        end)
-        |> Enum.reject(&MapSet.member?(visited, &1))
-        |> Enum.uniq()
-
-      visited = Enum.reduce(neighbor_ids, visited, &MapSet.put(&2, &1))
-      new_queue = Enum.map(neighbor_ids, &{&1, current_depth + 1})
-
-      bfs(graph, queue ++ new_queue, visited, rels, max_depth, min_weight)
-    end
-  end
-
   @spec decay_all(t(), float()) :: t()
   def decay_all(%__MODULE__{} = graph, factor) when is_float(factor) do
     nodes =

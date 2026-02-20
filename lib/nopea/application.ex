@@ -9,7 +9,6 @@ defmodule Nopea.Application do
   - Nopea.Cache (ETS storage)
   - Nopea.Registry or Nopea.DistributedRegistry (cluster mode)
   - Nopea.ServiceAgent.Supervisor (DynamicSupervisor for per-service agents)
-  - Nopea.Deploy.Supervisor (DynamicSupervisor for deploy workers)
   - Nopea.Cluster (libcluster, optional)
   - Nopea.DistributedSupervisor (Horde, optional)
   - Nopea.API.Router (HTTP API, optional)
@@ -30,7 +29,6 @@ defmodule Nopea.Application do
       |> add_cluster_child(cluster_enabled)
       |> add_registry_child(cluster_enabled)
       |> add_service_agent_child()
-      |> add_deploy_supervisor_child(cluster_enabled)
       |> add_router_child()
 
     opts = [strategy: :one_for_one, name: Nopea.AppSupervisor]
@@ -87,18 +85,6 @@ defmodule Nopea.Application do
     if Application.get_env(:nopea, :enable_deploy_supervisor, true),
       do: children ++ [Nopea.ServiceAgent.Supervisor],
       else: children
-  end
-
-  defp add_deploy_supervisor_child(children, cluster_enabled) do
-    if Application.get_env(:nopea, :enable_deploy_supervisor, true) do
-      if cluster_enabled do
-        children ++ [Nopea.DistributedSupervisor]
-      else
-        children ++ [Nopea.Deploy.Supervisor]
-      end
-    else
-      children
-    end
   end
 
   defp add_router_child(children) do

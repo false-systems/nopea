@@ -10,7 +10,6 @@ defmodule Nopea.Events do
   - `:deploy_started` - Deployment initiated
   - `:deploy_completed` - Deployment succeeded
   - `:deploy_failed` - Deployment failed
-  - `:service_deployed` - Service first deployed
   """
 
   @specversion "1.0"
@@ -19,7 +18,6 @@ defmodule Nopea.Events do
           :deploy_started
           | :deploy_completed
           | :deploy_failed
-          | :service_deployed
 
   @type subject :: %{
           id: String.t(),
@@ -40,8 +38,7 @@ defmodule Nopea.Events do
   @event_type_map %{
     deploy_started: "dev.cdevents.deployment.started.0.1.0",
     deploy_completed: "dev.cdevents.deployment.completed.0.1.0",
-    deploy_failed: "dev.cdevents.deployment.failed.0.1.0",
-    service_deployed: "dev.cdevents.service.deployed.0.3.0"
+    deploy_failed: "dev.cdevents.deployment.failed.0.1.0"
   }
 
   @spec new(map()) :: t()
@@ -103,21 +100,6 @@ defmodule Nopea.Events do
         strategy: opts[:strategy],
         namespace: opts[:namespace],
         error: normalize_error(opts[:error]),
-        duration_ms: opts[:duration_ms]
-      }
-    })
-  end
-
-  @spec service_deployed(String.t(), map()) :: t()
-  def service_deployed(service, opts) do
-    new(%{
-      type: :service_deployed,
-      source: "/nopea/deploy/#{service}",
-      subject_id: service,
-      content: %{
-        environment: %{id: Map.get(opts, :namespace, "default"), source: "/nopea"},
-        artifactId: opts[:commit] && "pkg:deploy/#{service}@#{opts[:commit]}",
-        manifest_count: opts[:manifest_count],
         duration_ms: opts[:duration_ms]
       }
     })

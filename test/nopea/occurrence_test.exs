@@ -150,14 +150,6 @@ defmodule Nopea.OccurrenceTest do
     end
   end
 
-  describe "to_json/1" do
-    test "serializes occurrence to valid JSON" do
-      occurrence = Occurrence.build(@successful_result)
-      assert {:ok, json} = Occurrence.to_json(occurrence)
-      assert {:ok, _decoded} = Jason.decode(json)
-    end
-  end
-
   describe "persist/2" do
     setup do
       tmp_dir =

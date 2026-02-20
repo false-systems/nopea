@@ -10,9 +10,6 @@ defmodule Nopea.Graph.RelationType do
     :deployed_to
   ]
 
-  @spec all() :: [atom()]
-  def all, do: @types
-
   @spec valid?(term()) :: boolean()
   def valid?(type) when type in @types, do: true
   def valid?(_), do: false

@@ -9,7 +9,7 @@ defmodule Nopea.Graph.Node do
   alias Nopea.Graph.{EWMA, Identity, NodeKind}
 
   @enforce_keys [:id, :name, :kind, :relevance, :observations, :first_seen, :last_seen]
-  defstruct [:id, :name, :kind, :relevance, :observations, :first_seen, :last_seen, :summary]
+  defstruct [:id, :name, :kind, :relevance, :observations, :first_seen, :last_seen]
 
   @type t :: %__MODULE__{
           id: String.t(),
@@ -18,8 +18,7 @@ defmodule Nopea.Graph.Node do
           relevance: float(),
           observations: non_neg_integer(),
           first_seen: String.t(),
-          last_seen: String.t(),
-          summary: String.t() | nil
+          last_seen: String.t()
         }
 
   @node_death_threshold 0.01
@@ -37,8 +36,7 @@ defmodule Nopea.Graph.Node do
       relevance: 0.5,
       observations: 1,
       first_seen: ulid,
-      last_seen: ulid,
-      summary: nil
+      last_seen: ulid
     }
   end
 

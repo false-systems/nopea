@@ -44,11 +44,6 @@ defmodule Nopea.Occurrence do
     |> Map.put("deploy_data", build_deploy_data(result))
   end
 
-  @spec to_json(map()) :: {:ok, String.t()} | {:error, term()}
-  def to_json(occurrence) do
-    Jason.encode(occurrence, pretty: true)
-  end
-
   @spec persist(map(), String.t()) :: :ok | {:error, term()}
   def persist(occurrence, workdir) do
     dir = Path.join(workdir, ".nopea")
