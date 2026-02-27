@@ -43,6 +43,9 @@ defmodule Nopea.MixProject do
       # JSON
       {:jason, "~> 1.4"},
 
+      # FALSE Protocol
+      {:false_protocol, path: "../false-protocol/elixir"},
+
       # Web server (for API)
       {:plug_cowboy, "~> 2.7"},
 

@@ -120,8 +120,8 @@ defmodule Nopea.DeployIntegrationTest do
         assert is_binary(occurrence["id"])
         assert String.starts_with?(occurrence["type"], "deploy.run.")
         assert occurrence["source"] == "nopea"
-        assert is_map(occurrence["deploy_data"])
-        assert occurrence["deploy_data"]["service"] == "occ-test-svc"
+        assert is_map(occurrence["data"])
+        assert occurrence["data"]["service"] == "occ-test-svc"
       end
     end
   end

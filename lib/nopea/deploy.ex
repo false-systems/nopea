@@ -215,7 +215,8 @@ defmodule Nopea.Deploy do
       manifests_applied: result.manifest_count,
       duration_ms: result.duration_ms,
       verified: result.verified,
-      error: result.error
+      error: result.error,
+      applied_resources: result.applied_resources
     }
 
     memory_context =
@@ -226,6 +227,9 @@ defmodule Nopea.Deploy do
       end
 
     occurrence = Nopea.Occurrence.build(occurrence_input, memory_context)
+
+    # Start log emitter and emit key deploy events
+    occurrence = emit_deploy_logs(occurrence, result)
 
     # Persist to .nopea/ directory
     workdir = File.cwd!()
@@ -238,6 +242,47 @@ defmodule Nopea.Deploy do
         error: inspect(error),
         stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
       )
+  end
+
+  defp emit_deploy_logs(occurrence, result) do
+    {:ok, emitter} = Nopea.Occurrence.start_log_emitter(occurrence)
+
+    FalseProtocol.LogEmitter.info_full(
+      emitter,
+      "deploy started for #{result.service}",
+      %FalseProtocol.Semantic{
+        event: "deploy.apply.start",
+        what_happened:
+          "started applying #{result.manifest_count} manifests to #{result.namespace}"
+      }
+    )
+
+    case result.status do
+      :completed ->
+        FalseProtocol.LogEmitter.info_full(
+          emitter,
+          "deploy completed in #{result.duration_ms}ms",
+          %FalseProtocol.Semantic{
+            event: "deploy.apply.complete",
+            what_happened: "#{result.service} deployed successfully",
+            parameters: %{"verified" => result.verified, "duration_ms" => result.duration_ms}
+          }
+        )
+
+      status when status in [:failed, :rolledback] ->
+        FalseProtocol.LogEmitter.emit(
+          emitter,
+          :error,
+          "deploy #{status}: #{inspect(result.error)}",
+          %FalseProtocol.Semantic{
+            event: "deploy.apply.#{status}",
+            what_happened: "#{result.service} deployment #{status}",
+            impact: "service in #{result.namespace} is not updated"
+          }
+        )
+    end
+
+    Nopea.Occurrence.attach_log_ref(occurrence, emitter)
   end
 
   defp emit_start(spec, deploy_id, strategy) do
