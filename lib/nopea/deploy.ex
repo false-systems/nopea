@@ -215,7 +215,8 @@ defmodule Nopea.Deploy do
       manifests_applied: result.manifest_count,
       duration_ms: result.duration_ms,
       verified: result.verified,
-      error: result.error
+      error: result.error,
+      applied_resources: result.applied_resources
     }
 
     memory_context =
@@ -226,6 +227,9 @@ defmodule Nopea.Deploy do
       end
 
     occurrence = Nopea.Occurrence.build(occurrence_input, memory_context)
+
+    # Start log emitter and emit key deploy events
+    occurrence = emit_deploy_logs(occurrence, result)
 
     # Persist to .nopea/ directory
     workdir = File.cwd!()
@@ -238,6 +242,70 @@ defmodule Nopea.Deploy do
         error: inspect(error),
         stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
       )
+  end
+
+  defp emit_deploy_logs(occurrence, result) do
+    case Nopea.Occurrence.start_log_emitter(occurrence) do
+      {:ok, emitter} ->
+        FalseProtocol.LogEmitter.info_full(
+          emitter,
+          "deploy started for #{result.service}",
+          %FalseProtocol.Semantic{
+            event: "deploy.apply.start",
+            what_happened:
+              "started applying #{result.manifest_count} manifests to #{result.namespace}"
+          }
+        )
+
+        emit_status_log(emitter, result)
+        Nopea.Occurrence.attach_log_ref(occurrence, emitter)
+
+      {:error, reason} ->
+        Logger.warning("Failed to start deploy log emitter",
+          service: result.service,
+          reason: inspect(reason)
+        )
+
+        occurrence
+    end
+  end
+
+  defp emit_status_log(emitter, %{status: :completed} = result) do
+    FalseProtocol.LogEmitter.info_full(
+      emitter,
+      "deploy completed in #{result.duration_ms}ms",
+      %FalseProtocol.Semantic{
+        event: "deploy.apply.complete",
+        what_happened: "#{result.service} deployed successfully",
+        parameters: %{"verified" => result.verified, "duration_ms" => result.duration_ms}
+      }
+    )
+  end
+
+  defp emit_status_log(emitter, %{status: :failed} = result) do
+    FalseProtocol.LogEmitter.emit(
+      emitter,
+      :error,
+      "deploy failed: #{inspect(result.error)}",
+      %FalseProtocol.Semantic{
+        event: "deploy.apply.failed",
+        what_happened: "#{result.service} deployment failed",
+        impact: "service in #{result.namespace} is not updated"
+      }
+    )
+  end
+
+  defp emit_status_log(emitter, %{status: :rolledback} = result) do
+    FalseProtocol.LogEmitter.emit(
+      emitter,
+      :warning,
+      "deploy rolledback: #{inspect(result.error)}",
+      %FalseProtocol.Semantic{
+        event: "deploy.apply.rolledback",
+        what_happened: "#{result.service} deployment rolled back",
+        impact: "service in #{result.namespace} reverted to previous version"
+      }
+    )
   end
 
   defp emit_start(spec, deploy_id, strategy) do
