@@ -7,10 +7,11 @@ defmodule Nopea.CLI do
   - status   Show deployment status
   - context  Show memory context for a service
   - history  Show deployment history
-  - rollback Roll back a deployment
   - memory   Show memory graph stats
   - serve    Start daemon mode (HTTP API)
   """
+
+  require Logger
 
   def main(args) do
     {opts, args, _} =
@@ -44,7 +45,7 @@ defmodule Nopea.CLI do
 
     case Nopea.Deploy.Spec.from_path(path, service, namespace, strategy: strategy) do
       {:ok, spec} ->
-        result = Nopea.Deploy.run(spec)
+        result = Nopea.Deploy.deploy(spec)
         output(result, opts)
 
       {:error, reason} ->
@@ -98,21 +99,19 @@ defmodule Nopea.CLI do
   end
 
   defp serve(_opts) do
-    IO.puts("Starting Nopea daemon...")
+    Logger.info("Starting Nopea daemon...")
+    Application.put_env(:nopea, :enable_api, true)
 
-    case Supervisor.start_child(Nopea.AppSupervisor, Nopea.API.Router) do
-      {:ok, _pid} ->
+    case Application.ensure_all_started(:nopea) do
+      {:ok, _apps} ->
         port = Application.get_env(:nopea, :api_port, 4000)
-        IO.puts("Nopea API listening on port #{port}")
-
-      {:error, {:already_started, _pid}} ->
-        IO.puts("Nopea API already running")
+        Logger.info("Nopea API listening on port #{port}")
+        Process.sleep(:infinity)
 
       {:error, reason} ->
-        IO.puts(:stderr, "Failed to start API: #{inspect(reason)}")
+        Logger.error("Failed to start Nopea: #{inspect(reason)}")
+        System.halt(1)
     end
-
-    Process.sleep(:infinity)
   end
 
   defp output(data, opts) do
