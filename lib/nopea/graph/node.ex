@@ -14,7 +14,7 @@ defmodule Nopea.Graph.Node do
   @type t :: %__MODULE__{
           id: String.t(),
           name: String.t(),
-          kind: atom(),
+          kind: NodeKind.t(),
           relevance: float(),
           observations: non_neg_integer(),
           first_seen: String.t(),
@@ -23,7 +23,7 @@ defmodule Nopea.Graph.Node do
 
   @node_death_threshold 0.01
 
-  @spec new(atom(), String.t(), String.t()) :: t()
+  @spec new(NodeKind.t(), String.t(), String.t()) :: t()
   def new(kind, name, ulid)
       when is_atom(kind) and is_binary(name) and is_binary(ulid) do
     true = NodeKind.valid?(kind)

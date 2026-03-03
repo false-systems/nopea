@@ -28,19 +28,22 @@ defmodule Nopea.Occurrence do
   def build(result, memory_context \\ nil) do
     {type_suffix, severity, outcome} = classify(result.status)
 
-    {:ok, occ} =
-      Occurrence.new("nopea", "deploy.run.#{type_suffix}",
-        severity: severity,
-        outcome: outcome
-      )
+    case Occurrence.new("nopea", "deploy.run.#{type_suffix}",
+           severity: severity,
+           outcome: outcome
+         ) do
+      {:ok, occ} ->
+        occ
+        |> maybe_set_namespace(result)
+        |> maybe_add_entities(result)
+        |> Occurrence.with_data(build_deploy_data(result))
+        |> Occurrence.with_history(build_history(result))
+        |> maybe_add_error(result)
+        |> maybe_add_reasoning(result, memory_context)
 
-    occ
-    |> maybe_set_namespace(result)
-    |> maybe_add_entities(result)
-    |> Occurrence.with_data(build_deploy_data(result))
-    |> Occurrence.with_history(build_history(result))
-    |> maybe_add_error(result)
-    |> maybe_add_reasoning(result, memory_context)
+      {:error, reason} ->
+        raise "FalseProtocol.Occurrence.new failed: #{inspect(reason)}"
+    end
   end
 
   @doc """
@@ -48,7 +51,7 @@ defmodule Nopea.Occurrence do
 
   Mode is `:both` — deploy logs are human-readable AND AI-structured.
   """
-  @spec start_log_emitter(Occurrence.t()) :: {:ok, pid()}
+  @spec start_log_emitter(Occurrence.t()) :: {:ok, pid()} | {:error, term()}
   def start_log_emitter(%Occurrence{} = occ) do
     FalseProtocol.LogEmitter.start_link(occ.id, "nopea", :both)
   end

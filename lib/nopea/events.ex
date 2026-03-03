@@ -33,6 +33,7 @@ defmodule Nopea.Events do
           subject: subject()
         }
 
+  @enforce_keys [:id, :type, :source, :specversion, :timestamp, :subject]
   defstruct [:id, :type, :source, :specversion, :timestamp, :subject]
 
   @event_type_map %{

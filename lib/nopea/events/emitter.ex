@@ -112,7 +112,7 @@ defmodule Nopea.Events.Emitter do
 
   @impl true
   def handle_cast({:emit, _event}, %{enabled: false} = state) do
-    # Silently ignore when disabled
+    Logger.debug("CDEvent ignored (emitter disabled)")
     {:noreply, state}
   end
 

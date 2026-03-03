@@ -5,6 +5,8 @@ defmodule Nopea.Graph.NodeKind do
   Value object — immutable, equality by value.
   """
 
+  @type t :: :error | :concept
+
   @kinds [:error, :concept]
 
   @spec valid?(term()) :: boolean()

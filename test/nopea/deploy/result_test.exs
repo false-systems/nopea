@@ -44,4 +44,28 @@ defmodule Nopea.Deploy.ResultTest do
       assert result.verified == false
     end
   end
+
+  describe "rolledback/5" do
+    test "builds a rolledback result" do
+      spec = sample_spec()
+      result = Result.rolledback("01GHI", spec, :blue_green, {:apply_failed, "oom"}, 8000)
+
+      assert result.deploy_id == "01GHI"
+      assert result.status == :rolledback
+      assert result.strategy == :blue_green
+      assert result.error == {:apply_failed, "oom"}
+      assert result.duration_ms == 8000
+      assert result.verified == false
+      assert result.manifest_count == 2
+      assert %DateTime{} = result.timestamp
+    end
+  end
+
+  describe "enforce_keys" do
+    test "requires mandatory fields" do
+      assert_raise ArgumentError, ~r/keys must also be given/, fn ->
+        struct!(Result, %{})
+      end
+    end
+  end
 end
