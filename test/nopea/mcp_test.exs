@@ -24,7 +24,7 @@ defmodule Nopea.MCPTest do
   end
 
   describe "handle_request/1 tools/list" do
-    test "lists available tools" do
+    test "lists all 5 tools" do
       request = %{
         "jsonrpc" => "2.0",
         "id" => 2,
@@ -35,13 +35,14 @@ defmodule Nopea.MCPTest do
       assert {:ok, response} = MCP.handle_request(request)
       tools = response["result"]["tools"]
       assert is_list(tools)
-      assert tools != []
 
       tool_names = Enum.map(tools, & &1["name"])
+      assert length(tool_names) == 5
       assert "nopea_deploy" in tool_names
       assert "nopea_context" in tool_names
       assert "nopea_history" in tool_names
       assert "nopea_health" in tool_names
+      assert "nopea_explain" in tool_names
     end
   end
 
@@ -130,6 +131,78 @@ defmodule Nopea.MCPTest do
       content = response["result"]["content"]
       text = hd(content)["text"]
       assert text =~ "No active agent"
+    end
+  end
+
+  describe "handle_request/1 tools/call nopea_deploy" do
+    test "returns error when service is missing" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 20,
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "nopea_deploy",
+          "arguments" => %{}
+        }
+      }
+
+      assert {:ok, response} = MCP.handle_request(request)
+      assert response["error"]["message"] == "service is required"
+    end
+
+    test "returns error when service is empty string" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 21,
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "nopea_deploy",
+          "arguments" => %{"service" => ""}
+        }
+      }
+
+      assert {:ok, response} = MCP.handle_request(request)
+      assert response["error"]["message"] == "service is required"
+    end
+  end
+
+  describe "handle_request/1 tools/call nopea_history" do
+    test "returns no history when cache unavailable" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 30,
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "nopea_history",
+          "arguments" => %{"service" => "unknown-svc"}
+        }
+      }
+
+      assert {:ok, response} = MCP.handle_request(request)
+      content = response["result"]["content"]
+      text = hd(content)["text"]
+      decoded = Jason.decode!(text)
+      # Cache not running in async test → either "Cache not available" or "No history found"
+      assert decoded["message"] != nil
+    end
+  end
+
+  describe "handle_request/1 tools/call nopea_explain" do
+    test "returns default message when memory unavailable" do
+      request = %{
+        "jsonrpc" => "2.0",
+        "id" => 40,
+        "method" => "tools/call",
+        "params" => %{
+          "name" => "nopea_explain",
+          "arguments" => %{"service" => "test-svc"}
+        }
+      }
+
+      assert {:ok, response} = MCP.handle_request(request)
+      content = response["result"]["content"]
+      text = hd(content)["text"]
+      assert text =~ "Memory not available"
     end
   end
 
