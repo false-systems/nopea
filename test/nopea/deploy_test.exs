@@ -85,12 +85,113 @@ defmodule Nopea.DeployTest do
   end
 
   describe "strategy selection" do
-    test "always uses direct when no explicit strategy" do
+    test "unknown service (no memory) defaults to direct" do
       spec = %Spec{
         service: "clean-svc",
         namespace: "default",
         manifests: [],
         strategy: nil
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :direct
+    end
+
+    test "known service with high failure confidence auto-selects canary" do
+      # First, create failure history so Memory knows about this service
+      Nopea.Memory.record_deploy(%{
+        service: "flaky-svc",
+        namespace: "default",
+        status: :failed,
+        error: {:timeout, "connection refused"},
+        concurrent_deploys: []
+      })
+
+      # Reinforce the failure pattern to push confidence above threshold
+      for _ <- 1..4 do
+        Nopea.Memory.record_deploy(%{
+          service: "flaky-svc",
+          namespace: "default",
+          status: :failed,
+          error: {:timeout, "connection refused"},
+          concurrent_deploys: []
+        })
+      end
+
+      # Give casts time to process
+      Process.sleep(50)
+
+      # Verify memory has failure patterns above threshold
+      ctx = Nopea.Memory.get_deploy_context("flaky-svc", "default")
+      assert ctx.known == true
+      assert Enum.any?(ctx.failure_patterns, fn p -> p.confidence > 0.15 end)
+
+      # Now deploy with nil strategy — should auto-select canary
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("flaky-svc", "default")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "default" ->
+        assert manifest["kind"] == "Rollout"
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "flaky-svc",
+        namespace: "default",
+        manifests: [deployment],
+        strategy: nil
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :canary
+    end
+
+    test "known service with low failure confidence stays direct" do
+      # Single success — known but no failure patterns
+      Nopea.Memory.record_deploy(%{
+        service: "stable-svc",
+        namespace: "default",
+        status: :completed,
+        error: nil,
+        concurrent_deploys: []
+      })
+
+      Process.sleep(50)
+
+      ctx = Nopea.Memory.get_deploy_context("stable-svc", "default")
+      assert ctx.known == true
+      assert ctx.failure_patterns == []
+
+      spec = %Spec{
+        service: "stable-svc",
+        namespace: "default",
+        manifests: [],
+        strategy: nil
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :direct
+    end
+
+    test "explicit strategy always overrides memory" do
+      # Create failure history
+      for _ <- 1..5 do
+        Nopea.Memory.record_deploy(%{
+          service: "override-svc",
+          namespace: "default",
+          status: :failed,
+          error: "crash",
+          concurrent_deploys: []
+        })
+      end
+
+      Process.sleep(50)
+
+      spec = %Spec{
+        service: "override-svc",
+        namespace: "default",
+        manifests: [],
+        strategy: :direct
       }
 
       result = Deploy.run(spec)

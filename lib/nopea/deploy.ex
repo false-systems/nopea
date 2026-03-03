@@ -119,6 +119,15 @@ defmodule Nopea.Deploy do
     strategy
   end
 
+  defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
+       when is_list(patterns) do
+    threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
+
+    if Enum.any?(patterns, fn p -> p.confidence > threshold end),
+      do: :canary,
+      else: :direct
+  end
+
   defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 
   defp select_strategy(%Spec{strategy: other}, _context) do
