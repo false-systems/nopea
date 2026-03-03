@@ -12,6 +12,28 @@ defmodule Nopea.DistributedRegistryTest do
 
   @moduletag :distributed
 
+  # Poll-based assertion for async operations (replaces Process.sleep barriers)
+  defp assert_eventually(fun, timeout_ms \\ 500, interval_ms \\ 10) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    do_poll(fun, deadline, interval_ms)
+  end
+
+  defp do_poll(fun, deadline, interval_ms) do
+    case fun.() do
+      true ->
+        true
+
+      false ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("assert_eventually timed out")
+        else
+          Process.sleep(interval_ms)
+          do_poll(fun, deadline, interval_ms)
+        end
+    end
+  end
+
   # Start registry once for all tests
   setup_all do
     case DistributedRegistry.start_link([]) do
@@ -66,8 +88,10 @@ defmodule Nopea.DistributedRegistryTest do
       # Kill the agent
       Agent.stop(agent)
 
-      # Give Horde time to clean up
-      Process.sleep(100)
+      # Poll until Horde cleans up the registration
+      assert_eventually(fn ->
+        DistributedRegistry.lookup(key) == {:error, :not_found}
+      end)
 
       # Should be able to re-register
       {:ok, agent2} = Agent.start_link(fn -> 99 end, name: DistributedRegistry.via(key))
@@ -90,8 +114,10 @@ defmodule Nopea.DistributedRegistryTest do
           Process.sleep(1000)
         end)
 
-      # Give it time to register
-      Process.sleep(50)
+      # Poll until registration completes
+      assert_eventually(fn ->
+        match?({:ok, _}, DistributedRegistry.lookup(key))
+      end)
 
       # Should be able to look up the task's pid
       assert {:ok, pid} = DistributedRegistry.lookup(key)
@@ -110,7 +136,10 @@ defmodule Nopea.DistributedRegistryTest do
           Process.sleep(1000)
         end)
 
-      Process.sleep(50)
+      # Poll until first registration completes
+      assert_eventually(fn ->
+        match?({:ok, _}, DistributedRegistry.lookup(key))
+      end)
 
       # Second process tries to register same key
       task2 =
@@ -134,6 +163,11 @@ defmodule Nopea.DistributedRegistryTest do
     test "finds registered process" do
       key = "lookup-test-#{:rand.uniform(10000)}"
       {:ok, agent} = Agent.start_link(fn -> :found end, name: DistributedRegistry.via(key))
+
+      # Horde registration may need a moment to propagate
+      assert_eventually(fn ->
+        match?({:ok, _}, DistributedRegistry.lookup(key))
+      end)
 
       assert {:ok, ^agent} = DistributedRegistry.lookup(key)
 
