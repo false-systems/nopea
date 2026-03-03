@@ -227,6 +227,54 @@ defmodule Nopea.OccurrenceTest do
     end
   end
 
+  describe "build_entity edge cases" do
+    test "handles resource with missing uid and namespace" do
+      result = %{
+        @successful_result
+        | applied_resources: [
+            %{
+              "kind" => "ConfigMap",
+              "metadata" => %{
+                "name" => "my-config",
+                "resourceVersion" => "1"
+              }
+            }
+          ]
+      }
+
+      occ = Nopea.Occurrence.build(result)
+
+      assert [entity] = occ.context.entities
+      assert entity.type == "ConfigMap"
+      assert entity.name == "my-config"
+      assert entity.id == "unknown"
+      assert entity.namespace == ""
+    end
+
+    test "skips malformed resources without crashing" do
+      result = %{
+        @successful_result
+        | applied_resources: [
+            "not a map",
+            %{"no_kind" => true},
+            %{
+              "kind" => "Service",
+              "metadata" => %{
+                "name" => "valid-svc",
+                "uid" => "svc-uid",
+                "resourceVersion" => "2"
+              }
+            }
+          ]
+      }
+
+      occ = Nopea.Occurrence.build(result)
+
+      assert [entity] = occ.context.entities
+      assert entity.name == "valid-svc"
+    end
+  end
+
   describe "persist/2" do
     setup do
       tmp_dir =
@@ -263,6 +311,11 @@ defmodule Nopea.OccurrenceTest do
       files = File.ls!(etf_dir)
       assert length(files) == 1
       assert hd(files) |> String.ends_with?(".etf")
+    end
+
+    test "returns error when workdir is not writable", _context do
+      occ = Nopea.Occurrence.build(@successful_result)
+      assert {:error, _reason} = Nopea.Occurrence.persist(occ, "/nonexistent/path/that/fails")
     end
 
     test "ETF round-trips to same struct", %{workdir: workdir} do

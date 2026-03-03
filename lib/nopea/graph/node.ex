@@ -14,7 +14,7 @@ defmodule Nopea.Graph.Node do
   @type t :: %__MODULE__{
           id: String.t(),
           name: String.t(),
-          kind: atom(),
+          kind: NodeKind.t(),
           relevance: float(),
           observations: non_neg_integer(),
           first_seen: String.t(),

@@ -16,18 +16,23 @@ defmodule Nopea.OccurrenceLogTest do
     applied_resources: []
   }
 
+  defp start_emitter(occ) do
+    {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+    on_exit(fn -> if Process.alive?(emitter), do: GenServer.stop(emitter) end)
+    emitter
+  end
+
   describe "start_log_emitter/1" do
     test "starts a log emitter for the occurrence" do
       occ = NopeaOccurrence.build(@result)
-      assert {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+      emitter = start_emitter(occ)
       assert is_pid(emitter)
     end
 
     test "emitter uses :both mode" do
       occ = NopeaOccurrence.build(@result)
-      {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+      emitter = start_emitter(occ)
 
-      # :both mode requires both message and semantic
       semantic = %FalseProtocol.Semantic{
         event: "deploy.test.event",
         what_happened: "test event"
@@ -41,7 +46,7 @@ defmodule Nopea.OccurrenceLogTest do
 
     test "emitter sequences entries correctly" do
       occ = NopeaOccurrence.build(@result)
-      {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+      emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
         event: "deploy.test.first",
@@ -63,7 +68,7 @@ defmodule Nopea.OccurrenceLogTest do
 
     test "entries reference the parent occurrence" do
       occ = NopeaOccurrence.build(@result)
-      {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+      emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
         event: "deploy.test.ref",
@@ -78,7 +83,7 @@ defmodule Nopea.OccurrenceLogTest do
   describe "attach_log_ref/2" do
     test "attaches log_ref with entry count" do
       occ = NopeaOccurrence.build(@result)
-      {:ok, emitter} = NopeaOccurrence.start_log_emitter(occ)
+      emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
         event: "deploy.test.count",

@@ -9,7 +9,7 @@ defmodule Nopea.Deploy.Spec do
           service: String.t(),
           namespace: String.t(),
           manifests: [map()],
-          strategy: atom() | nil,
+          strategy: Nopea.Deploy.Result.strategy() | nil,
           manifest_path: String.t() | nil,
           timeout_ms: pos_integer()
         }

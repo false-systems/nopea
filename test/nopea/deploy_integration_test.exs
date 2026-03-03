@@ -113,16 +113,16 @@ defmodule Nopea.DeployIntegrationTest do
       # Check occurrence file was generated
       occurrence_path = Path.join(File.cwd!(), ".nopea/occurrence.json")
 
-      if File.exists?(occurrence_path) do
-        {:ok, content} = File.read(occurrence_path)
-        {:ok, occurrence} = Jason.decode(content)
+      assert File.exists?(occurrence_path), "Expected occurrence.json to be generated"
 
-        assert is_binary(occurrence["id"])
-        assert String.starts_with?(occurrence["type"], "deploy.run.")
-        assert occurrence["source"] == "nopea"
-        assert is_map(occurrence["data"])
-        assert occurrence["data"]["service"] == "occ-test-svc"
-      end
+      {:ok, content} = File.read(occurrence_path)
+      {:ok, occurrence} = Jason.decode(content)
+
+      assert is_binary(occurrence["id"])
+      assert String.starts_with?(occurrence["type"], "deploy.run.")
+      assert occurrence["source"] == "nopea"
+      assert is_map(occurrence["data"])
+      assert occurrence["data"]["service"] == "occ-test-svc"
     end
   end
 end
