@@ -11,6 +11,12 @@ defmodule Nopea.DeployTest do
   setup do
     # Stub K8s mock to fall through to real implementation (works for empty manifests)
     Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+
+    # Stub get_resource to return not_found — no real cluster in tests
+    Mox.stub(Nopea.K8sMock, :get_resource, fn _api, _kind, _name, _ns ->
+      {:error, :not_found}
+    end)
+
     # Start Memory for context tracking
     start_supervised!({Nopea.Memory, []})
     # Start Cache for state recording
@@ -196,6 +202,30 @@ defmodule Nopea.DeployTest do
 
       result = Deploy.run(spec)
       assert result.strategy == :direct
+    end
+  end
+
+  describe "verify_deploy crash propagation" do
+    test "malformed manifest raises instead of returning false" do
+      # A manifest missing "apiVersion" and "kind" will cause Drift.verify_manifest
+      # to raise KeyError — this should propagate, not be silently caught
+      malformed = %{"metadata" => %{"name" => "bad"}}
+
+      Nopea.K8sMock
+      |> expect(:apply_manifests, fn _manifests, _ns ->
+        {:ok, [malformed]}
+      end)
+
+      spec = %Spec{
+        service: "crash-test-svc",
+        namespace: "default",
+        manifests: [malformed],
+        strategy: :direct
+      }
+
+      assert_raise KeyError, fn ->
+        Deploy.run(spec)
+      end
     end
   end
 

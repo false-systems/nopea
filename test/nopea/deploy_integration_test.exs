@@ -11,6 +11,12 @@ defmodule Nopea.DeployIntegrationTest do
   setup do
     start_supervised!(Nopea.Cache)
     start_supervised!({Nopea.Memory, []})
+
+    # Stub get_resource — no real cluster in tests
+    Mox.stub(Nopea.K8sMock, :get_resource, fn _api, _kind, _name, _ns ->
+      {:error, :not_found}
+    end)
+
     :ok
   end
 

@@ -160,21 +160,12 @@ defmodule Nopea.Deploy do
 
   defp verify_deploy(spec, applied) when is_list(applied) do
     Enum.all?(applied, fn manifest ->
-      case Nopea.Drift.verify_manifest(spec.service, manifest) do
+      case Nopea.Drift.verify_manifest(spec.service, manifest, k8s_module: k8s_module()) do
         :no_drift -> true
         :new_resource -> true
         _ -> false
       end
     end)
-  rescue
-    error ->
-      Logger.warning("Post-deploy verification failed",
-        service: spec.service,
-        error: inspect(error),
-        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
-      )
-
-      false
   end
 
   defp verify_deploy(_spec, _applied), do: false
