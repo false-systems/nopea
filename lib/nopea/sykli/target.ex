@@ -59,7 +59,7 @@ defmodule Nopea.SYKLI.Target do
       strategy: Map.get(task, :strategy)
     }
 
-    result = Nopea.Deploy.run(spec)
+    result = Nopea.Deploy.deploy(spec)
 
     case result.status do
       :completed -> {:ok, result}
