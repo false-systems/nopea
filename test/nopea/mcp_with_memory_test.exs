@@ -40,7 +40,7 @@ defmodule Nopea.MCPWithMemoryTest do
         })
       end
 
-      Process.sleep(50)
+      _ = Nopea.Memory.node_count()
 
       request = %{
         "jsonrpc" => "2.0",
@@ -70,7 +70,7 @@ defmodule Nopea.MCPWithMemoryTest do
         concurrent_deploys: []
       })
 
-      Process.sleep(50)
+      _ = Nopea.Memory.node_count()
 
       request = %{
         "jsonrpc" => "2.0",

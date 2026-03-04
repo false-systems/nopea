@@ -100,7 +100,7 @@ defmodule Nopea.CLI do
 
   defp serve(_opts) do
     Logger.info("Starting Nopea daemon...")
-    Application.put_env(:nopea, :enable_api, true)
+    Application.put_env(:nopea, :enable_router, true)
 
     case Application.ensure_all_started(:nopea) do
       {:ok, _apps} ->

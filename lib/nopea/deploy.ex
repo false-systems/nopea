@@ -417,6 +417,14 @@ defmodule Nopea.Deploy do
         {{:service, name}, _pid} when name != current_service -> true
         _ -> false
       end)
+      |> Enum.filter(fn {{:service, _name}, pid} ->
+        try do
+          %{status: status} = GenServer.call(pid, :status, 1_000)
+          status == :deploying
+        catch
+          :exit, _ -> false
+        end
+      end)
       |> Enum.map(fn {{:service, name}, _pid} -> name end)
     else
       []

@@ -54,8 +54,8 @@ defmodule Nopea.DeployTest do
 
       Deploy.run(spec)
 
-      # Memory.record_deploy is a cast, give it time
-      Process.sleep(50)
+      # Flush Memory mailbox — node_count is a call, so all prior casts complete first
+      _ = Nopea.Memory.node_count()
 
       ctx = Nopea.Memory.get_deploy_context("memory-test-svc", "default")
       assert ctx.known == true
@@ -124,8 +124,8 @@ defmodule Nopea.DeployTest do
         })
       end
 
-      # Give casts time to process
-      Process.sleep(50)
+      # Flush Memory mailbox — node_count is a call, so all prior casts complete first
+      _ = Nopea.Memory.node_count()
 
       # Verify memory has failure patterns above threshold
       ctx = Nopea.Memory.get_deploy_context("flaky-svc", "default")
@@ -162,7 +162,7 @@ defmodule Nopea.DeployTest do
         concurrent_deploys: []
       })
 
-      Process.sleep(50)
+      _ = Nopea.Memory.node_count()
 
       ctx = Nopea.Memory.get_deploy_context("stable-svc", "default")
       assert ctx.known == true
@@ -191,7 +191,7 @@ defmodule Nopea.DeployTest do
         })
       end
 
-      Process.sleep(50)
+      _ = Nopea.Memory.node_count()
 
       spec = %Spec{
         service: "override-svc",
