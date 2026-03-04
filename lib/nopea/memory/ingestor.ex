@@ -80,9 +80,28 @@ defmodule Nopea.Memory.Ingestor do
 
   defp maybe_record_failure(graph, _result, _ulid), do: graph
 
-  defp maybe_record_dependencies(graph, %{concurrent_deploys: [_ | _] = deploys}, ulid) do
+  defp maybe_record_dependencies(
+         graph,
+         %{service: service, concurrent_deploys: [_ | _] = deploys},
+         ulid
+       ) do
+    service_id = Nopea.Graph.Identity.compute_id(:concept, service)
+
     Enum.reduce(deploys, graph, fn other_service, g ->
       {g, _node} = Graph.upsert_node(g, :concept, other_service, 0.5, ulid)
+      other_id = Nopea.Graph.Identity.compute_id(:concept, other_service)
+
+      {g, _rel} =
+        Graph.upsert_relationship(
+          g,
+          service_id,
+          :deployed_together,
+          other_id,
+          0.5,
+          ulid,
+          "concurrent deploy at #{DateTime.utc_now() |> DateTime.to_iso8601()}"
+        )
+
       g
     end)
   end

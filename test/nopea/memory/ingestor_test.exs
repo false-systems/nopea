@@ -158,6 +158,40 @@ defmodule Nopea.Memory.IngestorTest do
       assert {:ok, _} = Graph.get_node(graph, redis_id)
       assert {:ok, _} = Graph.get_node(graph, config_id)
     end
+
+    test "creates deployed_together edges between service and concurrent deploys" do
+      graph = Graph.new()
+
+      result = %{
+        service: "auth-service",
+        namespace: "production",
+        status: :completed,
+        error: nil,
+        concurrent_deploys: ["redis", "config-service"]
+      }
+
+      graph = Ingestor.ingest(graph, result)
+
+      service_id = Identity.compute_id(:concept, "auth-service")
+
+      together_rels =
+        graph
+        |> Graph.neighbors(service_id, :outgoing)
+        |> Enum.filter(fn rel -> rel.relation == :deployed_together end)
+
+      assert length(together_rels) == 2
+
+      target_ids = Enum.map(together_rels, & &1.target) |> Enum.sort()
+
+      expected_ids =
+        [
+          Identity.compute_id(:concept, "redis"),
+          Identity.compute_id(:concept, "config-service")
+        ]
+        |> Enum.sort()
+
+      assert target_ids == expected_ids
+    end
   end
 
   describe "ingest/2 edge cases" do

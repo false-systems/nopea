@@ -178,7 +178,7 @@ defmodule Nopea.Deploy do
         status: result.status,
         error: result.error,
         duration_ms: result.duration_ms,
-        concurrent_deploys: []
+        concurrent_deploys: get_concurrent_services(result.service)
       })
     end
 
@@ -407,6 +407,21 @@ defmodule Nopea.Deploy do
   end
 
   defp emitter_running?, do: Process.whereis(Nopea.Events.Emitter) != nil
+
+  defp get_concurrent_services(current_service) do
+    if Process.whereis(Nopea.Registry) do
+      Registry.select(Nopea.Registry, [
+        {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+      ])
+      |> Enum.filter(fn
+        {{:service, name}, _pid} when name != current_service -> true
+        _ -> false
+      end)
+      |> Enum.map(fn {{:service, name}, _pid} -> name end)
+    else
+      []
+    end
+  end
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)
