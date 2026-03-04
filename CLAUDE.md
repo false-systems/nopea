@@ -13,10 +13,12 @@ Nopea is a deployment tool that builds a knowledge graph from every deployment. 
 ## ARCHITECTURE
 
 ```
-CLI/MCP/API → Deploy.run(spec)
-    → Memory.get_deploy_context()        # KERTO graph query
-    → select_strategy()                  # direct/canary/blue_green
-    → Strategy.*.execute()               # K8s server-side apply
+CLI/MCP/API → Deploy.deploy(spec)
+    → ServiceAgent.deploy()              # queue/serialize per-service
+    → Deploy.run(spec)                   # orchestration
+    → Memory.get_deploy_context()        # graph query
+    → select_strategy()                  # direct/canary/blue_green (memory-aware)
+    → Strategy.Direct.execute()          # K8s server-side apply
     → Drift.verify_manifest()            # post-deploy 3-way diff
     → Memory.record_deploy()             # graph update (EWMA)
     → Occurrence.build() + persist()     # FALSE Protocol
@@ -26,14 +28,15 @@ CLI/MCP/API → Deploy.run(spec)
 
 ```
 Nopea.Application
-├── Nopea.ULID                    # Monotonic ID generator
-├── TelemetryMetricsPrometheus    # Metrics (optional)
-├── Nopea.Events.Emitter          # CDEvents HTTP emitter (optional)
-├── Nopea.Memory                  # GenServer wrapping KERTO Graph
-├── Nopea.Cache                   # ETS tables for deployment state
-├── Nopea.Registry                # Process registry
-├── Nopea.Deploy.Supervisor       # DynamicSupervisor for deploy workers
-└── Nopea.API.Router              # Plug/Cowboy HTTP (optional)
+├── Nopea.ULID                       # Monotonic ID generator
+├── TelemetryMetricsPrometheus       # Metrics (optional)
+├── Nopea.Events.Emitter             # CDEvents HTTP emitter (optional)
+├── Nopea.Cache                      # ETS tables for deployment state
+├── Nopea.Memory                     # GenServer wrapping knowledge graph
+├── Nopea.Cluster                    # libcluster (optional, cluster mode)
+├── Nopea.Registry / DistributedRegistry  # Process registry
+├── Nopea.ServiceAgent.Supervisor    # DynamicSupervisor for per-service agents
+└── Nopea.API.Router                 # Plug/Cowboy HTTP (optional)
 ```
 
 ---
@@ -42,20 +45,21 @@ Nopea.Application
 
 | Module | Role | Lines |
 |--------|------|-------|
-| `Deploy` | Orchestration: context → strategy → execute → verify → record | ~100 |
+| `Deploy` | Orchestration: context → strategy → execute → verify → record | ~400 |
 | `Deploy.Spec` / `Result` | Structs for deploy lifecycle | ~100 |
-| `Deploy.Worker` / `Supervisor` | Per-deploy GenServer + DynamicSupervisor | ~60 |
+| `ServiceAgent` | Per-service GenServer: queue, serialize, backpressure | ~340 |
+| `ServiceAgent.Supervisor` | DynamicSupervisor for ServiceAgent processes | ~25 |
 | `Strategy.Direct` | Immediate K8s apply | ~20 |
-| `Strategy.Canary` | Gradual rollout (stub, step API exposed) | ~50 |
-| `Strategy.BlueGreen` | Slot-based cutover (stub, slot API exposed) | ~60 |
-| `Memory` | GenServer owning KERTO `Graph.t()` | ~150 |
+| `Kulta.RolloutBuilder` | Build Kulta Rollout CRDs for canary/blue_green | ~100 |
+| `Memory` | GenServer owning `Graph.t()` with EWMA decay | ~150 |
 | `Memory.Ingestor` | Deploy events → graph upsert operations | ~100 |
 | `Memory.Query` | Context queries (failure patterns, deps) | ~100 |
+| `Graph.*` | Knowledge graph: Graph, Node, Relationship, Identity, EWMA | ~400 |
 | `Occurrence` | FALSE Protocol occurrence generator | ~150 |
-| `MCP` | JSON-RPC MCP server (tools/list, tools/call) | ~200 |
+| `MCP` | JSON-RPC MCP server (tools/list, tools/call) | ~300 |
 | `API.Router` | HTTP API (deploy, context, history endpoints) | ~100 |
-| `SYKLI.Target` | SYKLI target behaviour adapter | ~60 |
-| `CLI` | Escript entry point | ~100 |
+| `SYKLI.Target` | SYKLI target behaviour adapter | ~80 |
+| `CLI` | Escript entry point | ~145 |
 | `K8s` | K8s API wrapper (conn, apply, get, delete) | ~70 |
 | `Applier` | YAML parsing + K8s server-side apply | ~200 |
 | `Drift` | Three-way drift detection (normalize, diff, verify) | ~250 |
@@ -72,11 +76,13 @@ Nopea.Application
 | OTP Application | `lib/nopea/application.ex` |
 | Deploy orchestration | `lib/nopea/deploy.ex` |
 | Deploy structs | `lib/nopea/deploy/spec.ex`, `result.ex` |
-| Deploy workers | `lib/nopea/deploy/worker.ex`, `supervisor.ex` |
+| ServiceAgent | `lib/nopea/service_agent.ex`, `service_agent/supervisor.ex` |
 | Strategy behaviour | `lib/nopea/strategy.ex` |
-| Strategy impls | `lib/nopea/strategy/direct.ex`, `canary.ex`, `blue_green.ex` |
-| Memory (KERTO) | `lib/nopea/memory.ex` |
+| Strategy impl | `lib/nopea/strategy/direct.ex` |
+| Kulta rollout builder | `lib/nopea/kulta/rollout_builder.ex` |
+| Memory | `lib/nopea/memory.ex` |
 | Memory helpers | `lib/nopea/memory/ingestor.ex`, `query.ex` |
+| Knowledge graph | `lib/nopea/graph/graph.ex`, `node.ex`, `relationship.ex`, `identity.ex`, `ewma.ex` |
 | FALSE Protocol | `lib/nopea/occurrence.ex` |
 | MCP server | `lib/nopea/mcp.ex` |
 | HTTP API | `lib/nopea/api/router.ex` |
@@ -89,7 +95,7 @@ Nopea.Application
 | Events | `lib/nopea/events.ex`, `events/emitter.ex` |
 | Metrics | `lib/nopea/metrics.ex` |
 | ULID | `lib/nopea/ulid.ex` |
-| Clustering | `lib/nopea/cluster.ex`, `distributed_*.ex` |
+| Clustering | `lib/nopea/cluster.ex`, `distributed_registry.ex`, `distributed_supervisor.ex` |
 
 ---
 
@@ -97,14 +103,14 @@ Nopea.Application
 
 | Package | Purpose |
 |---------|---------|
-| `kerto` | Knowledge graph (path dep: `../kerto`) |
+| `false_protocol` | FALSE Protocol occurrence generation |
 | `k8s` | Kubernetes client |
 | `yaml_elixir` | YAML parsing |
 | `jason` | JSON |
 | `plug_cowboy` | HTTP server |
 | `req` | HTTP client (CDEvents) |
 | `libcluster` | BEAM clustering (optional) |
-| `horde` | Distributed supervisor (optional) |
+| `horde` | Distributed supervisor/registry (optional) |
 | `telemetry` + `telemetry_metrics` + `prometheus_core` | Observability |
 | `mox` | Test mocking (test only) |
 | `credo` | Linting (dev/test only) |
@@ -129,8 +135,9 @@ end
 
 ```elixir
 require Logger
-Logger.info("Deploy completed: #{service} [#{deploy_id}] in #{duration_ms}ms")
+Logger.info("Deploy completed", service: service, deploy_id: deploy_id, duration_ms: duration_ms)
 # No IO.puts, no IO.inspect in production code
+# Use structured metadata — keys configured in config/config.exs
 ```
 
 ### Atoms not Strings
@@ -154,10 +161,12 @@ defp k8s_module, do: Application.get_env(:nopea, :k8s_module, Nopea.K8s)
 # Tests that don't set explicit expectations:
 setup do
   Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+  # Stub get_resource — no real cluster in tests
+  Mox.stub(Nopea.K8sMock, :get_resource, fn _, _, _, _ -> {:error, :not_found} end)
   :ok
 end
 
-# Tests with spawned processes (Worker, Supervisor):
+# Tests with spawned processes (ServiceAgent):
 setup :set_mox_global
 ```
 
@@ -180,7 +189,7 @@ setup :set_mox_global
 
 ```bash
 mix compile --warnings-as-errors
-mix test                          # 235 tests, 0 failures
+mix test                          # 280 tests, 0 failures
 mix format --check-formatted
 mix credo
 mix escript.build                 # CLI binary
@@ -188,18 +197,18 @@ mix escript.build                 # CLI binary
 
 ---
 
-## MEMORY SYSTEM (KERTO)
+## MEMORY SYSTEM
 
-The memory is a KERTO knowledge graph stored in the `Nopea.Memory` GenServer state.
+The memory is a knowledge graph stored in the `Nopea.Memory` GenServer state.
 
-**Graph nodes**: services, namespaces, errors, strategies
-**Graph relationships**: `:deployed_to`, `:failed_with`, `:depends_on`, `:used_strategy`
+**Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
+**Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
 **EWMA decay**: Weights decay hourly (factor 0.98) so recent deploys matter more
 
 Key queries:
 - `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
 - `Memory.record_deploy(result)` → ingest into graph (cast)
-- `Memory.get_graph_stats()` → node/relationship counts
+- `Memory.node_count()` / `Memory.relationship_count()` → graph stats
 
 ---
 
@@ -222,6 +231,7 @@ JSON-RPC 2.0 over stdin/stdout. Tools:
 | `nopea_deploy` | Deploy manifests to K8s |
 | `nopea_context` | Get memory context for a service |
 | `nopea_history` | Get deployment history |
+| `nopea_health` | Check health of active service agents |
 | `nopea_explain` | Explain strategy selection reasoning |
 
 ---
@@ -230,15 +240,20 @@ JSON-RPC 2.0 over stdin/stdout. Tools:
 
 ```elixir
 # Explicit strategy always wins
-defp select_strategy(%Spec{strategy: strategy}, _) when not is_nil(strategy), do: strategy
+defp select_strategy(%Spec{strategy: strategy}, _context)
+     when strategy in [:direct, :canary, :blue_green] do
+  strategy
+end
 
-# Memory-based: high failure confidence → canary
-defp select_strategy(_spec, %{failure_patterns: patterns}) do
-  if Enum.any?(patterns, fn p -> p.confidence > 0.15 end), do: :canary, else: :direct
+# Memory-based: known service with high failure confidence → canary
+defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
+     when is_list(patterns) do
+  threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
+  if Enum.any?(patterns, fn p -> p.confidence > threshold end), do: :canary, else: :direct
 end
 
 # Default: direct
-defp select_strategy(_spec, _context), do: :direct
+defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 ```
 
 ---
