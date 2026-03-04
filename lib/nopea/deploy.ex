@@ -413,19 +413,20 @@ defmodule Nopea.Deploy do
       Registry.select(Nopea.Registry, [
         {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
       ])
-      |> Enum.filter(fn
-        {{:service, name}, _pid} when name != current_service -> true
-        _ -> false
+      |> Enum.flat_map(fn
+        {{:service, name}, pid} when name != current_service ->
+          try do
+            case GenServer.call(pid, :status, 1_000) do
+              %{status: :deploying} -> [name]
+              _ -> []
+            end
+          catch
+            :exit, _ -> []
+          end
+
+        _ ->
+          []
       end)
-      |> Enum.filter(fn {{:service, _name}, pid} ->
-        try do
-          %{status: status} = GenServer.call(pid, :status, 1_000)
-          status == :deploying
-        catch
-          :exit, _ -> false
-        end
-      end)
-      |> Enum.map(fn {{:service, name}, _pid} -> name end)
     else
       []
     end
