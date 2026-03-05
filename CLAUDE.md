@@ -1,4 +1,6 @@
-# NOPEA: AI-Native Deployment Tool with Memory
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
@@ -10,7 +12,27 @@ Nopea is a deployment tool that builds a knowledge graph from every deployment. 
 
 ---
 
-## ARCHITECTURE
+## BUILD AND TEST COMMANDS
+
+```bash
+# Full verification (run after every change)
+mix format && mix compile --warnings-as-errors && mix test
+
+# Individual commands
+mix test                                    # 280 tests, 0 failures
+mix test test/nopea/deploy_test.exs         # Single file
+mix test test/nopea/deploy_test.exs:106     # Single test by line number
+mix test --exclude integration --exclude cluster  # Skip slow tests
+mix format --check-formatted
+mix credo
+mix escript.build                           # CLI binary → ./nopea
+```
+
+Tests exclude `:integration` and `:cluster` tags by default (configured in `test_helper.exs`).
+
+---
+
+## DEPLOY PIPELINE
 
 ```
 CLI/MCP/API → Deploy.deploy(spec)
@@ -20,11 +42,15 @@ CLI/MCP/API → Deploy.deploy(spec)
     → select_strategy()                  # direct/canary/blue_green (memory-aware)
     → Strategy.Direct.execute()          # K8s server-side apply
     → Drift.verify_manifest()            # post-deploy 3-way diff
-    → Memory.record_deploy()             # graph update (EWMA)
+    → Memory.record_deploy()             # graph update (EWMA, async cast)
     → Occurrence.build() + persist()     # FALSE Protocol
 ```
 
-### OTP Supervision Tree
+**Entry points**: `Deploy.deploy/1` routes through ServiceAgent if the supervisor is running; falls back to `Deploy.run/1` otherwise. Always use `deploy/1` — never call `run/1` directly from external callers.
+
+---
+
+## OTP SUPERVISION TREE
 
 ```
 Nopea.Application
@@ -39,63 +65,168 @@ Nopea.Application
 └── Nopea.API.Router                 # Plug/Cowboy HTTP (optional)
 ```
 
----
+### Configuration Feature Flags
 
-## KEY MODULES
+Most children are optional, controlled by `Application.get_env(:nopea, key)`:
 
-| Module | Role | Lines |
-|--------|------|-------|
-| `Deploy` | Orchestration: context → strategy → execute → verify → record | ~400 |
-| `Deploy.Spec` / `Result` | Structs for deploy lifecycle | ~100 |
-| `ServiceAgent` | Per-service GenServer: queue, serialize, backpressure | ~340 |
-| `ServiceAgent.Supervisor` | DynamicSupervisor for ServiceAgent processes | ~25 |
-| `Strategy.Direct` | Immediate K8s apply | ~20 |
-| `Kulta.RolloutBuilder` | Build Kulta Rollout CRDs for canary/blue_green | ~100 |
-| `Memory` | GenServer owning `Graph.t()` with EWMA decay | ~150 |
-| `Memory.Ingestor` | Deploy events → graph upsert operations | ~100 |
-| `Memory.Query` | Context queries (failure patterns, deps) | ~100 |
-| `Graph.*` | Knowledge graph: Graph, Node, Relationship, Identity, EWMA | ~400 |
-| `Occurrence` | FALSE Protocol occurrence generator | ~150 |
-| `MCP` | JSON-RPC MCP server (tools/list, tools/call) | ~300 |
-| `API.Router` | HTTP API (deploy, context, history endpoints) | ~100 |
-| `SYKLI.Target` | SYKLI target behaviour adapter | ~80 |
-| `CLI` | Escript entry point | ~145 |
-| `K8s` | K8s API wrapper (conn, apply, get, delete) | ~70 |
-| `Applier` | YAML parsing + K8s server-side apply | ~200 |
-| `Drift` | Three-way drift detection (normalize, diff, verify) | ~250 |
-| `Cache` | ETS tables: deployments, service_state, graph_snapshot | ~100 |
-| `Events` / `Events.Emitter` | CDEvents builder + async HTTP emitter | ~200 |
-| `ULID` | Monotonic ULID generator | ~80 |
+| Key | Default | Controls |
+|-----|---------|----------|
+| `:enable_metrics` | `true` | TelemetryMetricsPrometheus |
+| `:enable_cache` | `true` | Nopea.Cache (ETS) |
+| `:enable_memory` | `true` | Nopea.Memory (knowledge graph) |
+| `:enable_deploy_supervisor` | `true` | Registry + ServiceAgent.Supervisor |
+| `:enable_router` | `false` | Nopea.API.Router (HTTP) |
+| `:cluster_enabled` | `false` | Cluster + DistributedRegistry |
+| `:cdevents_endpoint` | `nil` | Events.Emitter (started only if set) |
+| `:canary_threshold` | `0.15` | Failure confidence for auto-canary |
 
 ---
 
-## FILE LOCATIONS
+## STRATEGY AUTO-SELECTION
 
-| What | Where |
-|------|-------|
-| OTP Application | `lib/nopea/application.ex` |
-| Deploy orchestration | `lib/nopea/deploy.ex` |
-| Deploy structs | `lib/nopea/deploy/spec.ex`, `result.ex` |
-| ServiceAgent | `lib/nopea/service_agent.ex`, `service_agent/supervisor.ex` |
-| Strategy behaviour | `lib/nopea/strategy.ex` |
-| Strategy impl | `lib/nopea/strategy/direct.ex` |
-| Kulta rollout builder | `lib/nopea/kulta/rollout_builder.ex` |
-| Memory | `lib/nopea/memory.ex` |
-| Memory helpers | `lib/nopea/memory/ingestor.ex`, `query.ex` |
-| Knowledge graph | `lib/nopea/graph/graph.ex`, `node.ex`, `relationship.ex`, `identity.ex`, `ewma.ex` |
-| FALSE Protocol | `lib/nopea/occurrence.ex` |
-| MCP server | `lib/nopea/mcp.ex` |
-| HTTP API | `lib/nopea/api/router.ex` |
-| SYKLI integration | `lib/nopea/sykli/target.ex` |
-| CLI | `lib/nopea/cli.ex` |
-| K8s client | `lib/nopea/k8s.ex`, `k8s/behaviour.ex` |
-| YAML + apply | `lib/nopea/applier.ex` |
-| Drift detection | `lib/nopea/drift.ex` |
-| Cache (ETS) | `lib/nopea/cache.ex` |
-| Events | `lib/nopea/events.ex`, `events/emitter.ex` |
-| Metrics | `lib/nopea/metrics.ex` |
-| ULID | `lib/nopea/ulid.ex` |
-| Clustering | `lib/nopea/cluster.ex`, `distributed_registry.ex`, `distributed_supervisor.ex` |
+```elixir
+# Explicit strategy always wins
+defp select_strategy(%Spec{strategy: strategy}, _context)
+     when strategy in [:direct, :canary, :blue_green], do: strategy
+
+# Memory-based: known service with high failure confidence → canary
+defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
+     when is_list(patterns) do
+  threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
+  if Enum.any?(patterns, fn p -> p.confidence > threshold end), do: :canary, else: :direct
+end
+
+# Default: direct
+defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
+```
+
+Canary/blue_green strategies use `Kulta.RolloutBuilder` to create Rollout CRDs. If no Deployment manifest is found in the spec, the strategy fails with `:no_deployment_found`.
+
+---
+
+## SERVICE AGENT
+
+Per-service GenServer that queues and serializes deploys:
+
+- **Queue limit**: 10 — rejects excess with `{:error, :queue_full}`
+- **Crash cooldown**: 2s delay before dequeuing after worker crash
+- **Idle timeout**: 30 min — agent shuts down if no deploys
+- **Lookup**: `ServiceAgent.status(service)` returns `{:ok, %{status: :idle | :deploying, ...}}`
+- **Health**: `ServiceAgent.health()` queries all active agents
+
+---
+
+## MEMORY SYSTEM
+
+Knowledge graph stored in `Nopea.Memory` GenServer state.
+
+**Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
+**Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
+**EWMA decay**: Weights decay hourly (factor 0.98) so recent deploys matter more
+
+Key API:
+- `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
+- `Memory.record_deploy(result)` → ingest into graph (**async cast**)
+- `Memory.node_count()` / `Memory.relationship_count()` → graph stats (**sync call**)
+
+---
+
+## K8S MOCK PATTERN
+
+`Nopea.K8s` implements `Nopea.K8s.Behaviour`. Mox injects `Nopea.K8sMock` in tests via config:
+
+```elixir
+# test_helper.exs sets:
+Application.put_env(:nopea, :k8s_module, Nopea.K8sMock)
+
+# Production code resolves at runtime:
+defp k8s_module, do: Application.get_env(:nopea, :k8s_module, Nopea.K8s)
+```
+
+### Test Setup Patterns
+
+**Unit tests** (no spawned processes):
+```elixir
+setup :verify_on_exit!
+setup do
+  Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+  Mox.stub(Nopea.K8sMock, :get_resource, fn _, _, _, _ -> {:error, :not_found} end)
+  :ok
+end
+```
+
+**Integration tests** (ServiceAgent, spawned workers):
+```elixir
+setup :set_mox_global          # MUST come before other setup — allows spawned processes to use mocks
+setup :verify_on_exit!
+setup do
+  Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+  start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
+  start_supervised!(Nopea.ServiceAgent.Supervisor)
+  start_supervised!({Nopea.Memory, []})
+  start_supervised!(Nopea.Cache)
+  :ok
+end
+```
+
+### Sync After Async Casts
+
+`Memory.record_deploy/1` is a `cast` — don't use `Process.sleep` to wait for it. Use any `GenServer.call` to the same process as a mailbox flush:
+
+```elixir
+# BEAM mailbox FIFO ordering guarantees all prior casts complete before this call returns
+_ = Nopea.Memory.node_count()
+ctx = Nopea.Memory.get_deploy_context("svc", "ns")
+```
+
+### Test Factories
+
+Available in `test/support/factory.ex`:
+- `Nopea.Test.Factory.sample_deployment_manifest(name, namespace)`
+- `Nopea.Test.Factory.sample_service_manifest(name)`
+- `Nopea.Test.Factory.sample_configmap_manifest(name, namespace, data)`
+
+---
+
+## ELIXIR PATTERNS
+
+### Error Handling
+```elixir
+# {:ok, _} / {:error, _} tuples — no bare raise
+with {:ok, conn} <- K8s.conn(),
+     {:ok, applied} <- Applier.apply_manifests(manifests, conn, ns) do
+  {:ok, applied}
+end
+```
+
+### Logging
+```elixir
+require Logger
+Logger.info("Deploy completed", service: service, deploy_id: deploy_id, duration_ms: duration_ms)
+# Use structured metadata — keys configured in config/config.exs
+# No IO.puts or IO.inspect in production code
+```
+
+### Atoms not Strings
+```elixir
+# Status: :completed, :failed — not "completed", "failed"
+# Strategy: :direct, :canary, :blue_green — not strings
+```
+
+---
+
+## FALSE PROTOCOL
+
+Occurrences are structured events generated after every deployment.
+
+**Types**: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
+**Storage**: `.nopea/occurrence.json` (cold) + `.nopea/occurrences/*.etf` (warm)
+
+---
+
+## MCP SERVER
+
+JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_health`, `nopea_explain`.
 
 ---
 
@@ -111,150 +242,9 @@ Nopea.Application
 | `req` | HTTP client (CDEvents) |
 | `libcluster` | BEAM clustering (optional) |
 | `horde` | Distributed supervisor/registry (optional) |
-| `telemetry` + `telemetry_metrics` + `prometheus_core` | Observability |
+| `telemetry` + `prometheus_core` | Observability |
 | `mox` | Test mocking (test only) |
 | `credo` | Linting (dev/test only) |
-
-**No Rust. No msgpax. No git operations.**
-
----
-
-## ELIXIR PATTERNS
-
-### Error Handling
-
-```elixir
-# Use {:ok, _} / {:error, _} tuples, not bare raise
-with {:ok, conn} <- K8s.conn(),
-     {:ok, applied} <- Applier.apply_manifests(manifests, conn, ns) do
-  {:ok, applied}
-end
-```
-
-### Logging
-
-```elixir
-require Logger
-Logger.info("Deploy completed", service: service, deploy_id: deploy_id, duration_ms: duration_ms)
-# No IO.puts, no IO.inspect in production code
-# Use structured metadata — keys configured in config/config.exs
-```
-
-### Atoms not Strings
-
-```elixir
-# Status: :completed, :failed — not "completed", "failed"
-# Strategy: :direct, :canary, :blue_green — not strings
-```
-
-### K8s Mock Pattern
-
-`Nopea.K8s` implements `Nopea.K8s.Behaviour`. In tests, `Nopea.K8sMock` (Mox) is injected via:
-
-```elixir
-# test_helper.exs
-Application.put_env(:nopea, :k8s_module, Nopea.K8sMock)
-
-# Direct.execute uses:
-defp k8s_module, do: Application.get_env(:nopea, :k8s_module, Nopea.K8s)
-
-# Tests that don't set explicit expectations:
-setup do
-  Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
-  # Stub get_resource — no real cluster in tests
-  Mox.stub(Nopea.K8sMock, :get_resource, fn _, _, _, _ -> {:error, :not_found} end)
-  :ok
-end
-
-# Tests with spawned processes (ServiceAgent):
-setup :set_mox_global
-```
-
----
-
-## TDD WORKFLOW
-
-**RED → GREEN → REFACTOR** — Always.
-
-1. Write failing test
-2. Verify it fails
-3. Write minimal implementation
-4. Verify all tests pass
-5. Refactor, add edge cases
-6. Run `mix format && mix compile --warnings-as-errors && mix test`
-
----
-
-## VERIFICATION
-
-```bash
-mix compile --warnings-as-errors
-mix test                          # 280 tests, 0 failures
-mix format --check-formatted
-mix credo
-mix escript.build                 # CLI binary
-```
-
----
-
-## MEMORY SYSTEM
-
-The memory is a knowledge graph stored in the `Nopea.Memory` GenServer state.
-
-**Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
-**Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
-**EWMA decay**: Weights decay hourly (factor 0.98) so recent deploys matter more
-
-Key queries:
-- `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
-- `Memory.record_deploy(result)` → ingest into graph (cast)
-- `Memory.node_count()` / `Memory.relationship_count()` → graph stats
-
----
-
-## FALSE PROTOCOL
-
-Occurrences are structured events generated after every deployment.
-
-**Types**: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
-**Blocks**: error, reasoning (includes memory context), history, deploy_data
-**Storage**: `.nopea/occurrence.json` (cold) + `.nopea/occurrences/*.etf` (warm)
-
----
-
-## MCP SERVER
-
-JSON-RPC 2.0 over stdin/stdout. Tools:
-
-| Tool | Description |
-|------|-------------|
-| `nopea_deploy` | Deploy manifests to K8s |
-| `nopea_context` | Get memory context for a service |
-| `nopea_history` | Get deployment history |
-| `nopea_health` | Check health of active service agents |
-| `nopea_explain` | Explain strategy selection reasoning |
-
----
-
-## STRATEGY AUTO-SELECTION
-
-```elixir
-# Explicit strategy always wins
-defp select_strategy(%Spec{strategy: strategy}, _context)
-     when strategy in [:direct, :canary, :blue_green] do
-  strategy
-end
-
-# Memory-based: known service with high failure confidence → canary
-defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
-     when is_list(patterns) do
-  threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
-  if Enum.any?(patterns, fn p -> p.confidence > threshold end), do: :canary, else: :direct
-end
-
-# Default: direct
-defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
-```
 
 ---
 
@@ -264,6 +254,7 @@ defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 2. **TDD always** — write failing test, implement, refactor
 3. **No stubs** — complete implementations only
 4. **Typespecs required** — all public functions
-5. **Run checks** — `mix compile --warnings-as-errors && mix test`
-6. **No IO.puts** — use `require Logger`
+5. **Run checks** — `mix format && mix compile --warnings-as-errors && mix test`
+6. **No IO.puts** — use `require Logger` with structured metadata
 7. **No bare raise** — use `{:error, reason}` tuples
+8. **No Process.sleep in tests** — use GenServer.call barriers for async cast sync
