@@ -11,6 +11,12 @@ defmodule Nopea.DeployTest do
   setup do
     # Stub K8s mock to fall through to real implementation (works for empty manifests)
     Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+
+    # Stub get_resource to return not_found — no real cluster in tests
+    Mox.stub(Nopea.K8sMock, :get_resource, fn _api, _kind, _name, _ns ->
+      {:error, :not_found}
+    end)
+
     # Start Memory for context tracking
     start_supervised!({Nopea.Memory, []})
     # Start Cache for state recording
@@ -48,8 +54,8 @@ defmodule Nopea.DeployTest do
 
       Deploy.run(spec)
 
-      # Memory.record_deploy is a cast, give it time
-      Process.sleep(50)
+      # Flush Memory mailbox — node_count is a call, so all prior casts complete first
+      _ = Nopea.Memory.node_count()
 
       ctx = Nopea.Memory.get_deploy_context("memory-test-svc", "default")
       assert ctx.known == true
@@ -85,7 +91,7 @@ defmodule Nopea.DeployTest do
   end
 
   describe "strategy selection" do
-    test "always uses direct when no explicit strategy" do
+    test "unknown service (no memory) defaults to direct" do
       spec = %Spec{
         service: "clean-svc",
         namespace: "default",
@@ -95,6 +101,131 @@ defmodule Nopea.DeployTest do
 
       result = Deploy.run(spec)
       assert result.strategy == :direct
+    end
+
+    test "known service with high failure confidence auto-selects canary" do
+      # First, create failure history so Memory knows about this service
+      Nopea.Memory.record_deploy(%{
+        service: "flaky-svc",
+        namespace: "default",
+        status: :failed,
+        error: {:timeout, "connection refused"},
+        concurrent_deploys: []
+      })
+
+      # Reinforce the failure pattern to push confidence above threshold
+      for _ <- 1..4 do
+        Nopea.Memory.record_deploy(%{
+          service: "flaky-svc",
+          namespace: "default",
+          status: :failed,
+          error: {:timeout, "connection refused"},
+          concurrent_deploys: []
+        })
+      end
+
+      # Flush Memory mailbox — node_count is a call, so all prior casts complete first
+      _ = Nopea.Memory.node_count()
+
+      # Verify memory has failure patterns above threshold
+      ctx = Nopea.Memory.get_deploy_context("flaky-svc", "default")
+      assert ctx.known == true
+      assert Enum.any?(ctx.failure_patterns, fn p -> p.confidence > 0.15 end)
+
+      # Now deploy with nil strategy — should auto-select canary
+      deployment = Nopea.Test.Factory.sample_deployment_manifest("flaky-svc", "default")
+
+      Nopea.K8sMock
+      |> expect(:apply_manifest, fn manifest, "default" ->
+        assert manifest["kind"] == "Rollout"
+        {:ok, manifest}
+      end)
+
+      spec = %Spec{
+        service: "flaky-svc",
+        namespace: "default",
+        manifests: [deployment],
+        strategy: nil
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :canary
+    end
+
+    test "known service with low failure confidence stays direct" do
+      # Single success — known but no failure patterns
+      Nopea.Memory.record_deploy(%{
+        service: "stable-svc",
+        namespace: "default",
+        status: :completed,
+        error: nil,
+        concurrent_deploys: []
+      })
+
+      _ = Nopea.Memory.node_count()
+
+      ctx = Nopea.Memory.get_deploy_context("stable-svc", "default")
+      assert ctx.known == true
+      assert ctx.failure_patterns == []
+
+      spec = %Spec{
+        service: "stable-svc",
+        namespace: "default",
+        manifests: [],
+        strategy: nil
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :direct
+    end
+
+    test "explicit strategy always overrides memory" do
+      # Create failure history
+      for _ <- 1..5 do
+        Nopea.Memory.record_deploy(%{
+          service: "override-svc",
+          namespace: "default",
+          status: :failed,
+          error: "crash",
+          concurrent_deploys: []
+        })
+      end
+
+      _ = Nopea.Memory.node_count()
+
+      spec = %Spec{
+        service: "override-svc",
+        namespace: "default",
+        manifests: [],
+        strategy: :direct
+      }
+
+      result = Deploy.run(spec)
+      assert result.strategy == :direct
+    end
+  end
+
+  describe "verify_deploy crash propagation" do
+    test "malformed manifest raises instead of returning false" do
+      # A manifest missing "apiVersion" and "kind" will cause Drift.verify_manifest
+      # to raise KeyError — this should propagate, not be silently caught
+      malformed = %{"metadata" => %{"name" => "bad"}}
+
+      Nopea.K8sMock
+      |> expect(:apply_manifests, fn _manifests, _ns ->
+        {:ok, [malformed]}
+      end)
+
+      spec = %Spec{
+        service: "crash-test-svc",
+        namespace: "default",
+        manifests: [malformed],
+        strategy: :direct
+      }
+
+      assert_raise KeyError, fn ->
+        Deploy.run(spec)
+      end
     end
   end
 

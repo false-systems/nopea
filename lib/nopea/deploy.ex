@@ -119,6 +119,15 @@ defmodule Nopea.Deploy do
     strategy
   end
 
+  defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
+       when is_list(patterns) do
+    threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
+
+    if Enum.any?(patterns, fn p -> p.confidence > threshold end),
+      do: :canary,
+      else: :direct
+  end
+
   defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
 
   defp select_strategy(%Spec{strategy: other}, _context) do
@@ -151,21 +160,12 @@ defmodule Nopea.Deploy do
 
   defp verify_deploy(spec, applied) when is_list(applied) do
     Enum.all?(applied, fn manifest ->
-      case Nopea.Drift.verify_manifest(spec.service, manifest) do
+      case Nopea.Drift.verify_manifest(spec.service, manifest, k8s_module: k8s_module()) do
         :no_drift -> true
         :new_resource -> true
         _ -> false
       end
     end)
-  rescue
-    error ->
-      Logger.warning("Post-deploy verification failed",
-        service: spec.service,
-        error: inspect(error),
-        stacktrace: __STACKTRACE__ |> Exception.format_stacktrace()
-      )
-
-      false
   end
 
   defp verify_deploy(_spec, _applied), do: false
@@ -178,7 +178,7 @@ defmodule Nopea.Deploy do
         status: result.status,
         error: result.error,
         duration_ms: result.duration_ms,
-        concurrent_deploys: []
+        concurrent_deploys: get_concurrent_services(result.service)
       })
     end
 
@@ -407,6 +407,30 @@ defmodule Nopea.Deploy do
   end
 
   defp emitter_running?, do: Process.whereis(Nopea.Events.Emitter) != nil
+
+  defp get_concurrent_services(current_service) do
+    if Process.whereis(Nopea.Registry) do
+      Registry.select(Nopea.Registry, [
+        {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+      ])
+      |> Enum.flat_map(fn
+        {{:service, name}, pid} when name != current_service ->
+          try do
+            case GenServer.call(pid, :status, 1_000) do
+              %{status: :deploying} -> [name]
+              _ -> []
+            end
+          catch
+            :exit, _ -> []
+          end
+
+        _ ->
+          []
+      end)
+    else
+      []
+    end
+  end
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)

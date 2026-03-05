@@ -7,7 +7,8 @@ defmodule Nopea.Graph.RelationType do
 
   @types [
     :breaks,
-    :deployed_to
+    :deployed_to,
+    :deployed_together
   ]
 
   @spec valid?(term()) :: boolean()
