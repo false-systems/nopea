@@ -144,34 +144,38 @@ defmodule Nopea.Events.Emitter do
             {:noreply, new_state}
 
           {:error, reason} ->
-            new_retry_count = item.retry_count + 1
-
-            if new_retry_count > state.max_retries do
-              Logger.warning("CDEvent dropped after max retries",
-                max_retries: state.max_retries,
-                error: inspect(reason)
-              )
-
-              new_state = %{state | queue: rest_queue, dropped_count: state.dropped_count + 1}
-              schedule_next_process(new_state, 0)
-              {:noreply, new_state}
-            else
-              Logger.debug("CDEvent send failed, retrying",
-                retry: new_retry_count,
-                error: inspect(reason)
-              )
-
-              updated_item = %{item | retry_count: new_retry_count}
-              new_state = %{state | queue: :queue.in_r(updated_item, rest_queue)}
-              delay = backoff_delay(new_retry_count, state.retry_delay_ms)
-              schedule_next_process(new_state, delay)
-              {:noreply, new_state}
-            end
+            {:noreply, handle_send_failure(item, reason, rest_queue, state)}
         end
     end
   end
 
   # Private Functions
+
+  defp handle_send_failure(item, reason, rest_queue, state) do
+    new_retry_count = item.retry_count + 1
+
+    if new_retry_count > state.max_retries do
+      Logger.warning("CDEvent dropped after max retries",
+        max_retries: state.max_retries,
+        error: inspect(reason)
+      )
+
+      new_state = %{state | queue: rest_queue, dropped_count: state.dropped_count + 1}
+      schedule_next_process(new_state, 0)
+      new_state
+    else
+      Logger.debug("CDEvent send failed, retrying",
+        retry: new_retry_count,
+        error: inspect(reason)
+      )
+
+      updated_item = %{item | retry_count: new_retry_count}
+      new_state = %{state | queue: :queue.in_r(updated_item, rest_queue)}
+      delay = backoff_delay(new_retry_count, state.retry_delay_ms)
+      schedule_next_process(new_state, delay)
+      new_state
+    end
+  end
 
   defp maybe_start_processing(%{processing: true} = state), do: state
 
