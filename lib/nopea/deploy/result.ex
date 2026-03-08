@@ -12,7 +12,7 @@ defmodule Nopea.Deploy.Result do
           deploy_id: String.t(),
           service: String.t(),
           namespace: String.t(),
-          status: :completed | :failed | :rolledback,
+          status: :completed | :failed | :rolledback | :progressing,
           strategy: strategy(),
           manifest_count: non_neg_integer(),
           duration_ms: non_neg_integer(),
@@ -72,6 +72,22 @@ defmodule Nopea.Deploy.Result do
       manifest_count: length(spec.manifests),
       duration_ms: duration_ms,
       error: error,
+      timestamp: DateTime.utc_now()
+    }
+  end
+
+  @spec progressing(String.t(), Nopea.Deploy.Spec.t(), strategy(), [map()], non_neg_integer()) ::
+          t()
+  def progressing(deploy_id, spec, strategy, applied, duration_ms) do
+    %__MODULE__{
+      deploy_id: deploy_id,
+      service: spec.service,
+      namespace: spec.namespace,
+      status: :progressing,
+      strategy: strategy,
+      manifest_count: length(spec.manifests),
+      duration_ms: duration_ms,
+      applied_resources: applied,
       timestamp: DateTime.utc_now()
     }
   end

@@ -66,4 +66,25 @@ defmodule Nopea.K8s do
       end
     end
   end
+
+  @impl true
+  @spec patch_resource(String.t(), String.t(), String.t(), String.t(), map()) ::
+          {:ok, map()} | {:error, term()}
+  def patch_resource(api_version, kind, name, namespace, patch) do
+    with {:ok, conn} <- conn() do
+      resource =
+        Map.merge(patch, %{
+          "apiVersion" => api_version,
+          "kind" => kind,
+          "metadata" =>
+            Map.merge(patch["metadata"] || %{}, %{
+              "name" => name,
+              "namespace" => namespace
+            })
+        })
+
+      operation = K8s.Client.patch(resource)
+      K8s.Client.run(conn, operation)
+    end
+  end
 end

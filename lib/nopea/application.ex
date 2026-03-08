@@ -29,6 +29,7 @@ defmodule Nopea.Application do
       |> add_cluster_child(cluster_enabled)
       |> add_registry_child(cluster_enabled)
       |> add_service_agent_child()
+      |> add_progressive_child()
       |> add_router_child()
 
     opts = [strategy: :one_for_one, name: Nopea.AppSupervisor]
@@ -84,6 +85,12 @@ defmodule Nopea.Application do
   defp add_service_agent_child(children) do
     if Application.get_env(:nopea, :enable_deploy_supervisor, true),
       do: children ++ [Nopea.ServiceAgent.Supervisor],
+      else: children
+  end
+
+  defp add_progressive_child(children) do
+    if Application.get_env(:nopea, :enable_deploy_supervisor, true),
+      do: children ++ [Nopea.Progressive.Supervisor],
       else: children
   end
 

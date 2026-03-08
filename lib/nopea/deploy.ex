@@ -56,6 +56,21 @@ defmodule Nopea.Deploy do
 
     # 4. Execute
     case execute_strategy(strategy, spec) do
+      {:ok, {applied, :progressing}} ->
+        duration_ms = duration_ms(start_time)
+        result = Result.progressing(deploy_id, spec, strategy, applied, duration_ms)
+        record_outcome(result, context)
+        start_progressive_monitor(deploy_id, spec, strategy)
+
+        Logger.info("Deploy progressing",
+          service: spec.service,
+          deploy_id: deploy_id,
+          strategy: strategy,
+          duration_ms: duration_ms
+        )
+
+        result
+
       {:ok, applied} ->
         duration_ms = duration_ms(start_time)
 
@@ -100,6 +115,7 @@ defmodule Nopea.Deploy do
 
     case result.status do
       :completed -> {:ok, result}
+      :progressing -> {:ok, result}
       :failed -> {:error, result.error}
     end
   end
@@ -143,9 +159,8 @@ defmodule Nopea.Deploy do
   defp execute_strategy(strategy, spec) when strategy in [:canary, :blue_green] do
     case Nopea.Kulta.RolloutBuilder.build(spec, strategy) do
       {:ok, rollout} ->
-        k8s_module().apply_manifest(rollout, spec.namespace)
-        |> case do
-          {:ok, applied} -> {:ok, [applied]}
+        case k8s_module().apply_manifest(rollout, spec.namespace) do
+          {:ok, applied} -> {:ok, {[applied], :progressing}}
           {:error, _} = error -> error
         end
 
@@ -317,6 +332,24 @@ defmodule Nopea.Deploy do
     end
   end
 
+  defp emit_status_log(emitter, %{status: :progressing} = result) do
+    case FalseProtocol.LogEmitter.info_full(
+           emitter,
+           "deploy progressing via #{result.strategy}",
+           %FalseProtocol.Semantic{
+             event: "deploy.apply.progressing",
+             what_happened: "#{result.service} progressive delivery started",
+             parameters: %{"strategy" => result.strategy, "duration_ms" => result.duration_ms}
+           }
+         ) do
+      {:ok, _entry} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to emit deploy progressing log", reason: inspect(reason))
+    end
+  end
+
   defp emit_status_log(emitter, %{status: :rolledback} = result) do
     case FalseProtocol.LogEmitter.emit(
            emitter,
@@ -403,6 +436,25 @@ defmodule Nopea.Deploy do
         })
 
       Nopea.Events.Emitter.emit(Nopea.Events.Emitter, event)
+    end
+  end
+
+  defp start_progressive_monitor(deploy_id, spec, strategy) do
+    if Process.whereis(Nopea.Progressive.Supervisor) do
+      case Nopea.Progressive.Supervisor.start_monitor(deploy_id, spec, strategy) do
+        {:ok, _pid} ->
+          Logger.info("Progressive monitor started",
+            deploy_id: deploy_id,
+            service: spec.service,
+            strategy: strategy
+          )
+
+        {:error, reason} ->
+          Logger.error("Failed to start progressive monitor",
+            deploy_id: deploy_id,
+            error: inspect(reason)
+          )
+      end
     end
   end
 
