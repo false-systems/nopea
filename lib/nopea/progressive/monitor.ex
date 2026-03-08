@@ -268,9 +268,9 @@ defmodule Nopea.Progressive.Monitor do
   defp terminal?(phase), do: phase in [:completed, :promoted, :failed]
 
   defp record_outcome(rollout) do
-    if Process.whereis(Nopea.Memory) do
-      status = if rollout.phase in [:completed, :promoted], do: :completed, else: :failed
+    status = if rollout.phase in [:completed, :promoted], do: :completed, else: :failed
 
+    if Process.whereis(Nopea.Memory) do
       Nopea.Memory.record_deploy(%{
         service: rollout.service,
         namespace: rollout.namespace,
@@ -278,6 +278,14 @@ defmodule Nopea.Progressive.Monitor do
         error: if(status == :failed, do: :rollout_failed),
         duration_ms: DateTime.diff(rollout.updated_at, rollout.started_at, :millisecond),
         concurrent_deploys: []
+      })
+    end
+
+    if Nopea.Cache.available?() do
+      Nopea.Cache.put_service_state(rollout.service, %{
+        status: status,
+        last_deploy: rollout.deploy_id,
+        last_deploy_at: DateTime.utc_now()
       })
     end
   end

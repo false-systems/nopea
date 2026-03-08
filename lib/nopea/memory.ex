@@ -162,10 +162,16 @@ defmodule Nopea.Memory do
 
   defp persist_to_disk(graph, workdir) do
     path = graph_path(workdir)
+    binary = @graph_version <> :erlang.term_to_binary(graph)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)) do
-      binary = @graph_version <> :erlang.term_to_binary(graph)
-      File.write(path, binary)
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, binary) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("Failed to persist graph to disk",
+          error: inspect(reason)
+        )
     end
   rescue
     error ->

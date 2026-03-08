@@ -74,17 +74,29 @@ defmodule Nopea.API.Router do
 
   post "/api/promote/:deploy_id" do
     case Nopea.Surface.promote(deploy_id) do
-      {:ok, rollout} -> json(conn, 200, Map.from_struct(rollout))
-      {:error, :not_found} -> json(conn, 404, %{error: "not_found"})
-      {:error, reason} -> json(conn, 500, %{error: inspect(reason)})
+      {:ok, rollout} ->
+        json(conn, 200, Map.from_struct(rollout))
+
+      {:error, :not_found} ->
+        json(conn, 404, %{error: "not_found"})
+
+      {:error, reason} ->
+        Logger.error("Promote failed", deploy_id: deploy_id, error: inspect(reason))
+        json(conn, 500, %{error: "Internal server error"})
     end
   end
 
   post "/api/rollback/:deploy_id" do
     case Nopea.Surface.rollback(deploy_id) do
-      {:ok, rollout} -> json(conn, 200, Map.from_struct(rollout))
-      {:error, :not_found} -> json(conn, 404, %{error: "not_found"})
-      {:error, reason} -> json(conn, 500, %{error: inspect(reason)})
+      {:ok, rollout} ->
+        json(conn, 200, Map.from_struct(rollout))
+
+      {:error, :not_found} ->
+        json(conn, 404, %{error: "not_found"})
+
+      {:error, reason} ->
+        Logger.error("Rollback failed", deploy_id: deploy_id, error: inspect(reason))
+        json(conn, 500, %{error: "Internal server error"})
     end
   end
 

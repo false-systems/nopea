@@ -59,7 +59,6 @@ defmodule Nopea.Deploy do
       {:ok, {applied, :progressing}} ->
         duration_ms = duration_ms(start_time)
         result = Result.progressing(deploy_id, spec, strategy, applied, duration_ms)
-        record_outcome(result, context)
         start_progressive_monitor(deploy_id, spec, strategy)
 
         Logger.info("Deploy progressing",
