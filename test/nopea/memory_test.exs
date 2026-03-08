@@ -3,9 +3,11 @@ defmodule Nopea.MemoryTest do
 
   alias Nopea.Memory
 
-  setup do
-    # ULID is started by the application; just ensure Memory is fresh
-    pid = start_supervised!({Memory, []})
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: tmp_dir} do
+    # Use tmp_dir as workdir to avoid picking up stale graph files
+    pid = start_supervised!({Memory, workdir: tmp_dir})
     %{pid: pid}
   end
 

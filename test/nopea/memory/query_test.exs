@@ -88,7 +88,7 @@ defmodule Nopea.Memory.QueryTest do
       ctx = Query.deploy_context(graph, "auth-service", "production")
 
       # Should have depends_on relationship to namespace
-      assert length(ctx.dependencies) >= 1
+      assert ctx.dependencies != []
       ns_dep = Enum.find(ctx.dependencies, fn d -> String.contains?(d.target, "namespace:") end)
       assert ns_dep != nil
     end
@@ -193,7 +193,7 @@ defmodule Nopea.Memory.QueryTest do
       service_id = Identity.compute_id(:concept, "risky-svc")
       recs = Query.recommendations(graph, service_id)
 
-      assert length(recs) >= 1
+      assert recs != []
       assert Enum.any?(recs, fn r -> String.contains?(r, "Deploy with caution") end)
     end
 

@@ -11,7 +11,9 @@ defmodule Nopea.MCP do
   - `nopea_deploy` — Deploy manifests to a namespace
   - `nopea_context` — Get memory context for a service
   - `nopea_history` — Get deployment history
+  - `nopea_health` — Check health of active service agents
   - `nopea_explain` — Explain why a strategy was selected
+  - `nopea_services` — List known services
 
   ## Protocol
 
@@ -97,6 +99,37 @@ defmodule Nopea.MCP do
         },
         "required" => ["service"]
       }
+    },
+    %{
+      "name" => "nopea_services",
+      "description" => "List all known services that have been deployed.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{},
+        "required" => []
+      }
+    },
+    %{
+      "name" => "nopea_promote",
+      "description" => "Promote an active progressive rollout to completion.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "deploy_id" => %{"type" => "string", "description" => "Deploy ID of the active rollout"}
+        },
+        "required" => ["deploy_id"]
+      }
+    },
+    %{
+      "name" => "nopea_rollback",
+      "description" => "Rollback an active progressive rollout.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "deploy_id" => %{"type" => "string", "description" => "Deploy ID of the active rollout"}
+        },
+        "required" => ["deploy_id"]
+      }
     }
   ]
 
@@ -176,33 +209,27 @@ defmodule Nopea.MCP do
     end
   end
 
-  # Tool implementations
+  # Tool implementations — delegate to Surface
 
   defp call_tool("nopea_context", args) do
     service = args["service"]
     namespace = args["namespace"] || "default"
-
-    if Process.whereis(Nopea.Memory) do
-      context = Nopea.Memory.get_deploy_context(service, namespace)
-      {:ok, Jason.encode!(context, pretty: true)}
-    else
-      {:ok, Jason.encode!(%{known: false, message: "Memory not available"})}
-    end
+    context = Nopea.Surface.context(service, namespace)
+    {:ok, Jason.encode!(context, pretty: true)}
   end
 
   defp call_tool("nopea_history", args) do
     service = args["service"]
 
-    if Nopea.Cache.available?() do
-      case Nopea.Cache.get_service_state(service) do
-        {:ok, state} ->
-          {:ok, Jason.encode!(%{service: service, state: state}, pretty: true)}
+    case Nopea.Surface.history(service) do
+      {:ok, data} ->
+        {:ok, Jason.encode!(data, pretty: true)}
 
-        {:error, :not_found} ->
-          {:ok, Jason.encode!(%{service: service, deployments: [], message: "No history found"})}
-      end
-    else
-      {:ok, Jason.encode!(%{service: service, deployments: [], message: "Cache not available"})}
+      {:error, :not_found} ->
+        {:ok, Jason.encode!(%{service: service, deployments: [], message: "No history found"})}
+
+      {:error, :unavailable} ->
+        {:ok, Jason.encode!(%{service: service, deployments: [], message: "Cache not available"})}
     end
   end
 
@@ -236,15 +263,18 @@ defmodule Nopea.MCP do
   defp call_tool("nopea_health", args) do
     case args["service"] do
       nil ->
-        agents = Nopea.ServiceAgent.health()
-        {:ok, Jason.encode!(%{agents: agents, count: length(agents)}, pretty: true)}
+        health = Nopea.Surface.health()
+        {:ok, Jason.encode!(health, pretty: true)}
 
       service ->
-        case Nopea.ServiceAgent.status(service) do
+        case Nopea.Surface.status(service) do
           {:ok, status} ->
             {:ok, Jason.encode!(status, pretty: true)}
 
           {:error, :not_found} ->
+            {:ok, Jason.encode!(%{service: service, message: "No active agent"}, pretty: true)}
+
+          {:error, :unavailable} ->
             {:ok, Jason.encode!(%{service: service, message: "No active agent"}, pretty: true)}
         end
     end
@@ -253,37 +283,46 @@ defmodule Nopea.MCP do
   defp call_tool("nopea_explain", args) do
     service = args["service"]
     namespace = args["namespace"] || "default"
+    {:ok, Nopea.Surface.explain(service, namespace)}
+  end
 
-    if Process.whereis(Nopea.Memory) do
-      context = Nopea.Memory.get_deploy_context(service, namespace)
-      {:ok, explain_strategy(service, namespace, context)}
-    else
-      {:ok, "Memory not available. Would use direct strategy by default."}
+  defp call_tool("nopea_services", _args) do
+    services = Nopea.Surface.services()
+    {:ok, Jason.encode!(%{services: services, count: length(services)}, pretty: true)}
+  end
+
+  defp call_tool("nopea_promote", args) do
+    deploy_id = args["deploy_id"]
+
+    case Nopea.Surface.promote(deploy_id) do
+      {:ok, rollout} ->
+        {:ok, Jason.encode!(Map.from_struct(rollout), pretty: true)}
+
+      {:error, :not_found} ->
+        {:error, "No active rollout for deploy '#{deploy_id}'"}
+
+      {:error, reason} ->
+        {:error, "Promote failed: #{inspect(reason)}"}
+    end
+  end
+
+  defp call_tool("nopea_rollback", args) do
+    deploy_id = args["deploy_id"]
+
+    case Nopea.Surface.rollback(deploy_id) do
+      {:ok, rollout} ->
+        {:ok, Jason.encode!(Map.from_struct(rollout), pretty: true)}
+
+      {:error, :not_found} ->
+        {:error, "No active rollout for deploy '#{deploy_id}'"}
+
+      {:error, reason} ->
+        {:error, "Rollback failed: #{inspect(reason)}"}
     end
   end
 
   defp call_tool(name, _args) do
     {:error, "Unknown tool: #{name}"}
-  end
-
-  defp explain_strategy(service, namespace, context) do
-    cond do
-      not context.known ->
-        "No deployment history for #{service}/#{namespace}. Would use direct strategy (default for unknown services)."
-
-      Enum.any?(context.failure_patterns, fn p -> p.confidence > 0.15 end) ->
-        patterns =
-          Enum.map_join(context.failure_patterns, ", ", fn p ->
-            "#{p.error} (confidence: #{Float.round(p.confidence, 2)})"
-          end)
-
-        "Failure patterns detected for #{service}/#{namespace}: #{patterns}. " <>
-          "Use canary or blue_green strategy — Kulta will handle progressive delivery."
-
-      true ->
-        "Would use direct strategy for #{service}/#{namespace}. " <>
-          "No significant failure patterns detected. Service is known and stable."
-    end
   end
 
   defp success_response(id, result) do
