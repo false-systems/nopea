@@ -9,6 +9,11 @@ defmodule Nopea.Memory do
 
   The graph enables context-aware deployments: "auth-service deploys
   fail when redis is also updating" (0.85 confidence, seen 4 times).
+
+  ## Persistence
+
+  Graph is persisted to `.nopea/graph.etf` alongside ETS snapshots.
+  On startup, restore order: ETS snapshot → disk → fresh graph.
   """
 
   use GenServer
@@ -16,10 +21,11 @@ defmodule Nopea.Memory do
 
   alias Nopea.Graph.Graph
 
-  defstruct [:graph, :decay_timer]
+  defstruct [:graph, :decay_timer, :workdir]
 
   @decay_interval_ms :timer.hours(1)
   @decay_factor 0.98
+  @graph_version <<1>>
 
   # Client API
 
@@ -56,7 +62,8 @@ defmodule Nopea.Memory do
 
   @impl true
   def init(opts) do
-    graph = restore_snapshot(opts) || Graph.new()
+    workdir = Keyword.get(opts, :workdir, File.cwd!())
+    graph = restore_snapshot(opts) || restore_from_disk(workdir) || Graph.new()
     timer = schedule_decay()
 
     Logger.info("Memory started",
@@ -64,7 +71,7 @@ defmodule Nopea.Memory do
       relationship_count: Graph.relationship_count(graph)
     )
 
-    {:ok, %__MODULE__{graph: graph, decay_timer: timer}}
+    {:ok, %__MODULE__{graph: graph, decay_timer: timer, workdir: workdir}}
   end
 
   @impl true
@@ -90,6 +97,7 @@ defmodule Nopea.Memory do
     try do
       graph = Nopea.Memory.Ingestor.ingest(state.graph, deploy_result)
       snapshot_graph(graph)
+      persist_to_disk(graph, state.workdir)
       {:noreply, %{state | graph: graph}}
     rescue
       error ->
@@ -106,10 +114,17 @@ defmodule Nopea.Memory do
   def handle_info(:decay, state) do
     graph = Graph.decay_all(state.graph, @decay_factor)
     timer = schedule_decay()
+    persist_to_disk(graph, state.workdir)
 
     Logger.debug("Memory decay applied", node_count: Graph.node_count(graph))
 
     {:noreply, %{state | graph: graph, decay_timer: timer}}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    persist_to_disk(state.graph, state.workdir)
+    :ok
   end
 
   # Private
@@ -143,5 +158,37 @@ defmodule Nopea.Memory do
       binary = :erlang.term_to_binary(graph)
       Nopea.Cache.put_graph_snapshot(binary)
     end
+  end
+
+  defp persist_to_disk(graph, workdir) do
+    path = graph_path(workdir)
+
+    with :ok <- File.mkdir_p(Path.dirname(path)) do
+      binary = @graph_version <> :erlang.term_to_binary(graph)
+      File.write(path, binary)
+    end
+  rescue
+    error ->
+      Logger.warning("Failed to persist graph to disk",
+        error: inspect(error)
+      )
+  end
+
+  defp restore_from_disk(workdir) do
+    path = graph_path(workdir)
+
+    case File.read(path) do
+      {:ok, <<1, rest::binary>>} ->
+        :erlang.binary_to_term(rest, [:safe])
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp graph_path(workdir) do
+    Path.join([workdir, ".nopea", "graph.etf"])
   end
 end
