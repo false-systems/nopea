@@ -39,31 +39,53 @@ defmodule Nopea.API.Router do
     handle_deploy(conn)
   end
 
+  get "/api/status/:service" do
+    case Nopea.Surface.status(service) do
+      {:ok, state} -> json(conn, 200, state)
+      {:error, :not_found} -> json(conn, 404, %{error: "not_found"})
+      {:error, :unavailable} -> json(conn, 503, %{error: "unavailable"})
+    end
+  end
+
   get "/api/context/:service" do
     namespace = conn.params["namespace"] || "default"
-
-    context =
-      if Process.whereis(Nopea.Memory) do
-        Nopea.Memory.get_deploy_context(service, namespace)
-      else
-        %{known: false}
-      end
-
+    context = Nopea.Surface.context(service, namespace)
     json(conn, 200, context)
   end
 
   get "/api/history/:service" do
-    history =
-      if Nopea.Cache.available?() do
-        case Nopea.Cache.get_service_state(service) do
-          {:ok, state} -> %{service: service, state: state}
-          {:error, :not_found} -> %{service: service, deployments: []}
-        end
-      else
-        %{service: service, deployments: []}
-      end
+    case Nopea.Surface.history(service) do
+      {:ok, data} -> json(conn, 200, data)
+      {:error, :not_found} -> json(conn, 200, %{service: service, deployments: []})
+      {:error, :unavailable} -> json(conn, 200, %{service: service, deployments: []})
+    end
+  end
 
-    json(conn, 200, history)
+  get "/api/explain/:service" do
+    namespace = conn.params["namespace"] || "default"
+    explanation = Nopea.Surface.explain(service, namespace)
+    json(conn, 200, %{service: service, explanation: explanation})
+  end
+
+  get "/api/services" do
+    services = Nopea.Surface.services()
+    json(conn, 200, %{services: services, count: length(services)})
+  end
+
+  post "/api/promote/:deploy_id" do
+    case Nopea.Surface.promote(deploy_id) do
+      {:ok, rollout} -> json(conn, 200, Map.from_struct(rollout))
+      {:error, :not_found} -> json(conn, 404, %{error: "not_found"})
+      {:error, reason} -> json(conn, 500, %{error: inspect(reason)})
+    end
+  end
+
+  post "/api/rollback/:deploy_id" do
+    case Nopea.Surface.rollback(deploy_id) do
+      {:ok, rollout} -> json(conn, 200, Map.from_struct(rollout))
+      {:error, :not_found} -> json(conn, 404, %{error: "not_found"})
+      {:error, reason} -> json(conn, 500, %{error: inspect(reason)})
+    end
   end
 
   match _ do
@@ -80,7 +102,7 @@ defmodule Nopea.API.Router do
           strategy: Nopea.Helpers.parse_strategy(params["strategy"])
         }
 
-        result = Nopea.Deploy.run(spec)
+        result = Nopea.Deploy.deploy(spec)
         json(conn, 200, Nopea.Helpers.serialize_deploy_result(result))
 
       _ ->
