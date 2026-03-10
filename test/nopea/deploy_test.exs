@@ -249,7 +249,7 @@ defmodule Nopea.DeployTest do
       }
 
       result = Deploy.run(spec)
-      assert result.status == :completed
+      assert result.status == :progressing
       assert result.strategy == :canary
     end
 
@@ -271,7 +271,7 @@ defmodule Nopea.DeployTest do
       }
 
       result = Deploy.run(spec)
-      assert result.status == :completed
+      assert result.status == :progressing
       assert result.strategy == :blue_green
     end
 

@@ -22,7 +22,15 @@ config :logger, :default_formatter,
     :node_count,
     :relationship_count,
     :auto_selected,
-    :verified
+    :verified,
+    :count,
+    :keys,
+    :retry,
+    :max_retries,
+    :type,
+    :endpoint,
+    :path,
+    :manifest_count
   ]
 
 import_config "#{config_env()}.exs"

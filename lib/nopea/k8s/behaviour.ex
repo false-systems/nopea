@@ -26,4 +26,12 @@ defmodule Nopea.K8s.Behaviour do
               name :: String.t(),
               namespace :: String.t()
             ) :: :ok | {:error, term()}
+
+  @callback patch_resource(
+              api_version :: String.t(),
+              kind :: String.t(),
+              name :: String.t(),
+              namespace :: String.t(),
+              patch :: map()
+            ) :: {:ok, map()} | {:error, term()}
 end

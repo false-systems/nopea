@@ -37,12 +37,15 @@ defmodule Nopea.MCPTest do
       assert is_list(tools)
 
       tool_names = Enum.map(tools, & &1["name"])
-      assert length(tool_names) == 5
+      assert length(tool_names) == 8
       assert "nopea_deploy" in tool_names
       assert "nopea_context" in tool_names
       assert "nopea_history" in tool_names
       assert "nopea_health" in tool_names
       assert "nopea_explain" in tool_names
+      assert "nopea_services" in tool_names
+      assert "nopea_promote" in tool_names
+      assert "nopea_rollback" in tool_names
     end
   end
 

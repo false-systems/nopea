@@ -72,13 +72,11 @@ defmodule Nopea.Occurrence do
     with {:ok, json} <- FalseProtocol.JSON.encode(occurrence),
          :ok <- File.mkdir_p(dir),
          :ok <- File.write(Path.join(dir, "occurrence.json"), json),
-         :ok <- File.mkdir_p(etf_dir),
-         :ok <-
-           File.write(
-             Path.join(etf_dir, "#{occurrence.id}.etf"),
-             :erlang.term_to_binary(occurrence)
-           ) do
-      :ok
+         :ok <- File.mkdir_p(etf_dir) do
+      File.write(
+        Path.join(etf_dir, "#{occurrence.id}.etf"),
+        :erlang.term_to_binary(occurrence)
+      )
     end
   end
 
