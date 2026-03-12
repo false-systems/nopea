@@ -40,10 +40,13 @@ CLI/MCP/API → Surface.*() → Deploy.deploy(spec)
     → Deploy.run(spec)                   # orchestration
     → Memory.get_deploy_context()        # graph query
     → select_strategy()                  # direct/canary/blue_green (memory-aware)
-    → Strategy.Direct.execute()          # K8s server-side apply (direct)
-    → Kulta.RolloutBuilder.build()       # Rollout CRD (canary/blue_green)
-    → Drift.verify_manifest()            # post-deploy 3-way diff (direct only)
-    → Memory.record_deploy()             # graph update (EWMA, async cast)
+    ├─ :direct →
+    │   → Strategy.Direct.execute()      # K8s server-side apply
+    │   → Drift.verify_manifest()        # post-deploy 3-way diff
+    │   → Memory.record_deploy()         # graph update (EWMA, async cast)
+    └─ :canary/:blue_green →
+        → Kulta.RolloutBuilder.build()   # Rollout CRD
+        → Progressive.Monitor.start()   # polls CRD → records outcome on terminal
     → Occurrence.build() + persist()     # FALSE Protocol
 ```
 
