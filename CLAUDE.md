@@ -19,7 +19,7 @@ Nopea is a deployment tool that builds a knowledge graph from every deployment. 
 mix format && mix compile --warnings-as-errors && mix test
 
 # Individual commands
-mix test                                    # 280 tests, 0 failures
+mix test                                    # 305 tests, 0 failures
 mix test test/nopea/deploy_test.exs         # Single file
 mix test test/nopea/deploy_test.exs:106     # Single test by line number
 mix test --exclude integration --exclude cluster  # Skip slow tests
@@ -35,18 +35,35 @@ Tests exclude `:integration` and `:cluster` tags by default (configured in `test
 ## DEPLOY PIPELINE
 
 ```
-CLI/MCP/API → Deploy.deploy(spec)
+CLI/MCP/API → Surface.*() → Deploy.deploy(spec)
     → ServiceAgent.deploy()              # queue/serialize per-service
     → Deploy.run(spec)                   # orchestration
     → Memory.get_deploy_context()        # graph query
     → select_strategy()                  # direct/canary/blue_green (memory-aware)
-    → Strategy.Direct.execute()          # K8s server-side apply
-    → Drift.verify_manifest()            # post-deploy 3-way diff
+    → Strategy.Direct.execute()          # K8s server-side apply (direct)
+    → Kulta.RolloutBuilder.build()       # Rollout CRD (canary/blue_green)
+    → Drift.verify_manifest()            # post-deploy 3-way diff (direct only)
     → Memory.record_deploy()             # graph update (EWMA, async cast)
     → Occurrence.build() + persist()     # FALSE Protocol
 ```
 
 **Entry points**: `Deploy.deploy/1` routes through ServiceAgent if the supervisor is running; falls back to `Deploy.run/1` otherwise. Always use `deploy/1` — never call `run/1` directly from external callers.
+
+**Progressive delivery**: Canary/blue_green strategies return `status: :progressing` and start a `Progressive.Monitor` GenServer. The Monitor polls the Kulta Rollout CRD and records the final outcome. Direct deploys return `:completed` or `:failed` immediately.
+
+---
+
+## SURFACE — UNIFIED INTERFACE LAYER
+
+`Nopea.Surface` is the facade backing CLI, MCP, and HTTP. All user-facing interfaces delegate here.
+
+```
+CLI (cli.ex) ──→ Surface.*() ──→ Memory / Cache / ServiceAgent / Progressive.Monitor
+MCP (mcp.ex) ──→ Surface.*()
+HTTP (router.ex) → Surface.*()
+```
+
+Key design: Surface handles graceful degradation when optional subsystems aren't running (e.g., returns `{:error, :unavailable}` if Cache is down rather than crashing).
 
 ---
 
@@ -62,6 +79,7 @@ Nopea.Application
 ├── Nopea.Cluster                    # libcluster (optional, cluster mode)
 ├── Nopea.Registry / DistributedRegistry  # Process registry
 ├── Nopea.ServiceAgent.Supervisor    # DynamicSupervisor for per-service agents
+├── Nopea.Progressive.Supervisor     # DynamicSupervisor for rollout monitors
 └── Nopea.API.Router                 # Plug/Cowboy HTTP (optional)
 ```
 
@@ -74,7 +92,7 @@ Most children are optional, controlled by `Application.get_env(:nopea, key)`:
 | `:enable_metrics` | `true` | TelemetryMetricsPrometheus |
 | `:enable_cache` | `true` | Nopea.Cache (ETS) |
 | `:enable_memory` | `true` | Nopea.Memory (knowledge graph) |
-| `:enable_deploy_supervisor` | `true` | Registry + ServiceAgent.Supervisor |
+| `:enable_deploy_supervisor` | `true` | Registry + ServiceAgent.Supervisor + Progressive.Supervisor |
 | `:enable_router` | `false` | Nopea.API.Router (HTTP) |
 | `:cluster_enabled` | `false` | Cluster + DistributedRegistry |
 | `:cdevents_endpoint` | `nil` | Events.Emitter (started only if set) |
@@ -118,7 +136,7 @@ Per-service GenServer that queues and serializes deploys:
 
 ## MEMORY SYSTEM
 
-Knowledge graph stored in `Nopea.Memory` GenServer state.
+Knowledge graph stored in `Nopea.Memory` GenServer state, persisted to `.nopea/graph.etf`.
 
 **Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
 **Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
@@ -128,6 +146,12 @@ Key API:
 - `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
 - `Memory.record_deploy(result)` → ingest into graph (**async cast**)
 - `Memory.node_count()` / `Memory.relationship_count()` → graph stats (**sync call**)
+
+### Persistence
+
+Graph persists to `.nopea/graph.etf` as versioned binary (`<<1, rest::binary>>`).
+Restore order on startup: ETS snapshot → disk → fresh `Graph.new()`.
+Written on every `record_deploy`, hourly decay, and `terminate/2`.
 
 ---
 
@@ -224,9 +248,21 @@ Occurrences are structured events generated after every deployment.
 
 ---
 
+## PROGRESSIVE DELIVERY
+
+Canary and blue_green strategies create Kulta Rollout CRDs and return `:progressing`. A `Progressive.Monitor` GenServer per rollout polls the CRD status.
+
+- **Phases**: `:progressing` → `:promoted` / `:completed` / `:degraded` / `:paused` / `:failed`
+- **Terminal**: `:completed`, `:promoted`, `:failed` — Monitor stops and records outcome
+- **Poll interval**: 10s, **Max duration**: 1 hour (timeout → `:failed`)
+- **Manual control**: `Surface.promote(deploy_id)` / `Surface.rollback(deploy_id)`
+- **Registry**: Monitors register as `{:rollout, deploy_id}` in `Nopea.Registry`
+
+---
+
 ## MCP SERVER
 
-JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_health`, `nopea_explain`.
+JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_health`, `nopea_explain`, `nopea_services`, `nopea_promote`, `nopea_rollback`.
 
 ---
 
