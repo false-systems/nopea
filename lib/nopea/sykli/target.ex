@@ -21,6 +21,8 @@ defmodule Nopea.SYKLI.Target do
           strategy: canary
   """
 
+  @behaviour Nopea.SYKLI.TargetBehaviour
+
   require Logger
 
   defmodule State do
