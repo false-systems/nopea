@@ -231,32 +231,33 @@ defmodule Nopea.Deploy do
         nil
       end
 
-    occurrence = Nopea.Occurrence.build(occurrence_input, memory_context)
+    case Nopea.Occurrence.build(occurrence_input, memory_context) do
+      {:ok, occurrence} ->
+        # Start log emitter and emit key deploy events
+        occurrence = emit_deploy_logs(occurrence, result)
 
-    # Start log emitter and emit key deploy events
-    occurrence = emit_deploy_logs(occurrence, result)
+        # Persist to .nopea/ directory
+        workdir = File.cwd!()
 
-    # Persist to .nopea/ directory
-    workdir = File.cwd!()
+        case Nopea.Occurrence.persist(occurrence, workdir) do
+          :ok ->
+            :ok
 
-    case Nopea.Occurrence.persist(occurrence, workdir) do
-      :ok ->
-        :ok
+          {:error, reason} ->
+            Logger.error("Failed to persist occurrence",
+              service: result.service,
+              deploy_id: result.deploy_id,
+              error: inspect(reason)
+            )
+        end
 
       {:error, reason} ->
-        Logger.error("Failed to persist occurrence",
+        Logger.error("Failed to generate occurrence",
           service: result.service,
           deploy_id: result.deploy_id,
           error: inspect(reason)
         )
     end
-  rescue
-    error ->
-      Logger.error("Failed to generate occurrence: #{Exception.message(error)}",
-        service: result.service,
-        deploy_id: result.deploy_id,
-        error: Exception.format(:error, error, __STACKTRACE__)
-      )
   end
 
   defp emit_deploy_logs(occurrence, result) do

@@ -24,7 +24,7 @@ defmodule Nopea.Occurrence do
   Optional second argument provides memory context from the knowledge graph
   to enrich the reasoning block.
   """
-  @spec build(map(), map() | nil) :: Occurrence.t()
+  @spec build(map(), map() | nil) :: {:ok, Occurrence.t()} | {:error, term()}
   def build(result, memory_context \\ nil) do
     {type_suffix, severity, outcome} = classify(result.status)
 
@@ -33,16 +33,19 @@ defmodule Nopea.Occurrence do
            outcome: outcome
          ) do
       {:ok, occ} ->
-        occ
-        |> maybe_set_namespace(result)
-        |> maybe_add_entities(result)
-        |> Occurrence.with_data(build_deploy_data(result))
-        |> Occurrence.with_history(build_history(result))
-        |> maybe_add_error(result)
-        |> maybe_add_reasoning(result, memory_context)
+        enriched =
+          occ
+          |> maybe_set_namespace(result)
+          |> maybe_add_entities(result)
+          |> Occurrence.with_data(build_deploy_data(result))
+          |> Occurrence.with_history(build_history(result))
+          |> maybe_add_error(result)
+          |> maybe_add_reasoning(result, memory_context)
+
+        {:ok, enriched}
 
       {:error, reason} ->
-        raise "FalseProtocol.Occurrence.new failed: #{inspect(reason)}"
+        {:error, {:occurrence_new_failed, reason}}
     end
   end
 
