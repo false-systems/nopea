@@ -14,6 +14,7 @@ defmodule Nopea.API.Router do
     json_decoder: Jason
   )
 
+  plug(Nopea.API.AuthPlug)
   plug(:match)
   plug(:dispatch)
 

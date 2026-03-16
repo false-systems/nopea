@@ -45,5 +45,6 @@ if config_env() == :prod do
     cluster_gossip_secret: System.get_env("NOPEA_CLUSTER_GOSSIP_SECRET"),
     cluster_hosts: cluster_hosts,
     enable_router: System.get_env("NOPEA_ENABLE_ROUTER", "true") == "true",
+    api_key: System.get_env("NOPEA_API_KEY"),
     api_port: String.to_integer(System.get_env("NOPEA_API_PORT", "4000"))
 end
