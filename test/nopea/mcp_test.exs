@@ -209,6 +209,100 @@ defmodule Nopea.MCPTest do
     end
   end
 
+  describe "handle_request/2 shutdown" do
+    test "returns null result and sets shutdown flag" do
+      state = MCP.initial_state()
+      request = %{"jsonrpc" => "2.0", "id" => 50, "method" => "shutdown"}
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert response["jsonrpc"] == "2.0"
+      assert response["id"] == 50
+      assert response["result"] == nil
+      assert new_state.shutdown_received == true
+    end
+
+    test "shutdown flag starts as false" do
+      state = MCP.initial_state()
+      assert state.shutdown_received == false
+    end
+  end
+
+  describe "handle_request/2 exit" do
+    test "returns :halt after shutdown was received" do
+      state = %{shutdown_received: true}
+      request = %{"jsonrpc" => "2.0", "method" => "exit"}
+
+      assert :halt = MCP.handle_request(request, state)
+    end
+
+    test "returns :halt even without prior shutdown" do
+      state = %{shutdown_received: false}
+      request = %{"jsonrpc" => "2.0", "method" => "exit"}
+
+      assert :halt = MCP.handle_request(request, state)
+    end
+  end
+
+  describe "handle_request/2 notifications/cancelled" do
+    test "returns nil response and preserves state" do
+      state = MCP.initial_state()
+
+      request = %{
+        "jsonrpc" => "2.0",
+        "method" => "notifications/cancelled",
+        "params" => %{"id" => 42, "reason" => "user cancelled"}
+      }
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert response == nil
+      assert new_state == state
+    end
+
+    test "handles missing params gracefully" do
+      state = MCP.initial_state()
+      request = %{"jsonrpc" => "2.0", "method" => "notifications/cancelled"}
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert response == nil
+      assert new_state == state
+    end
+  end
+
+  describe "handle_request/2 state passthrough" do
+    test "initialize preserves state" do
+      state = %{shutdown_received: false}
+      request = %{"jsonrpc" => "2.0", "id" => 1, "method" => "initialize"}
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert response["result"]["serverInfo"]["name"] == "nopea"
+      assert new_state == state
+    end
+
+    test "tools/list preserves state" do
+      state = %{shutdown_received: false}
+      request = %{"jsonrpc" => "2.0", "id" => 2, "method" => "tools/list"}
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert is_list(response["result"]["tools"])
+      assert new_state == state
+    end
+
+    test "notifications/initialized preserves state" do
+      state = %{shutdown_received: true}
+      request = %{"jsonrpc" => "2.0", "method" => "notifications/initialized"}
+
+      {response, new_state} = MCP.handle_request(request, state)
+
+      assert response == nil
+      assert new_state.shutdown_received == true
+    end
+  end
+
   describe "encode/decode" do
     test "round-trips through JSON" do
       request = %{
