@@ -100,6 +100,14 @@ Most children are optional, controlled by `Application.get_env(:nopea, key)`:
 | `:cluster_enabled` | `false` | Cluster + DistributedRegistry |
 | `:cdevents_endpoint` | `nil` | Events.Emitter (started only if set) |
 | `:canary_threshold` | `0.15` | Failure confidence for auto-canary |
+| `:cluster_strategy` | `:kubernetes_dns` | libcluster strategy (`:kubernetes_dns`, `:gossip`, `:epmd`) |
+| `:cluster_service` | `"nopea-headless"` | K8s headless service for DNS discovery |
+| `:cluster_app_name` | `"nopea"` | Erlang application name for DNS discovery |
+| `:pod_namespace` | `"default"` | Kubernetes namespace for DNS discovery |
+| `:cluster_polling_interval` | `5_000` | DNS polling interval in ms |
+| `:cluster_gossip_port` | `45_892` | UDP port for gossip strategy |
+| `:cluster_gossip_secret` | `nil` | Shared secret for gossip authentication |
+| `:cluster_hosts` | `[]` | Node list for EPMD strategy (atom list) |
 
 ---
 

@@ -30,7 +30,8 @@ config :logger, :default_formatter,
     :type,
     :endpoint,
     :path,
-    :manifest_count
+    :manifest_count,
+    :request_id
   ]
 
 import_config "#{config_env()}.exs"
