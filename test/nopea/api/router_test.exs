@@ -1,5 +1,5 @@
 defmodule Nopea.API.RouterTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Plug.Test
   import Plug.Conn
@@ -12,6 +12,10 @@ defmodule Nopea.API.RouterTest do
 
   setup do
     Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
+    # Ensure auth plug is in dev mode (no key required)
+    original_key = Application.get_env(:nopea, :api_key)
+    Application.put_env(:nopea, :api_key, nil)
+    on_exit(fn -> Application.put_env(:nopea, :api_key, original_key) end)
     :ok
   end
 
