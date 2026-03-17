@@ -69,20 +69,31 @@ defmodule Nopea.ServiceAgent do
   @spec health() :: [map()]
   def health do
     if registry_available?() do
-      Registry.select(Nopea.Registry, [
-        {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
-      ])
-      |> Enum.filter(fn
-        {{:service, _name}, _pid} -> true
-        _ -> false
-      end)
-      |> Enum.map(fn {{:service, name}, pid} ->
-        try do
-          GenServer.call(pid, :status, 5_000)
-        catch
-          :exit, _ -> %{service: name, status: :unavailable}
-        end
-      end)
+      statuses =
+        Registry.select(Nopea.Registry, [
+          {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+        ])
+        |> Enum.filter(fn
+          {{:service, _name}, _pid} -> true
+          _ -> false
+        end)
+        |> Enum.map(fn {{:service, name}, pid} ->
+          try do
+            GenServer.call(pid, :status, 5_000)
+          catch
+            :exit, _ -> %{service: name, status: :unavailable}
+          end
+        end)
+
+      active_count = Enum.count(statuses, fn s -> s[:status] == :deploying end)
+
+      :telemetry.execute(
+        [:nopea, :deploys, :active],
+        %{count: active_count},
+        %{}
+      )
+
+      statuses
     else
       []
     end

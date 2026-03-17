@@ -80,7 +80,16 @@ defmodule Nopea.Memory do
   end
 
   def handle_call({:get_deploy_context, service, namespace}, _from, state) do
+    query_start = System.monotonic_time()
     context = Nopea.Memory.Query.deploy_context(state.graph, service, namespace)
+    duration = System.monotonic_time() - query_start
+
+    :telemetry.execute(
+      [:nopea, :memory, :query, :stop],
+      %{duration: duration},
+      %{service: service}
+    )
+
     {:reply, context, state}
   end
 

@@ -52,7 +52,7 @@ defmodule Nopea.Deploy do
     )
 
     # 3. Emit start event
-    emit_start(spec, deploy_id, strategy)
+    metrics_start_time = emit_start(spec, deploy_id, strategy)
 
     # 4. Execute
     case execute_strategy(strategy, spec) do
@@ -60,6 +60,11 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.progressing(deploy_id, spec, strategy, applied, duration_ms)
         start_progressive_monitor(deploy_id, spec, strategy)
+
+        Nopea.Metrics.emit_deploy_complete(metrics_start_time, %{
+          service: spec.service,
+          strategy: strategy
+        })
 
         Logger.info("Deploy progressing",
           service: spec.service,
@@ -79,7 +84,7 @@ defmodule Nopea.Deploy do
         # 6. Record success
         result = Result.success(deploy_id, spec, strategy, applied, duration_ms, verified)
         record_outcome(result, context)
-        emit_complete(spec, deploy_id, strategy, duration_ms, verified)
+        emit_complete(spec, deploy_id, strategy, duration_ms, verified, metrics_start_time)
 
         Logger.info("Deploy completed",
           service: spec.service,
@@ -94,7 +99,7 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.failure(deploy_id, spec, strategy, reason, duration_ms)
         record_outcome(result, context)
-        emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time)
+        emit_failure(spec, deploy_id, strategy, reason, duration_ms, metrics_start_time)
 
         Logger.error("Deploy failed",
           service: spec.service,
@@ -388,7 +393,8 @@ defmodule Nopea.Deploy do
   end
 
   defp emit_start(spec, deploy_id, strategy) do
-    Nopea.Metrics.emit_deploy_start(%{service: spec.service, strategy: strategy})
+    metrics_start_time =
+      Nopea.Metrics.emit_deploy_start(%{service: spec.service, strategy: strategy})
 
     if emitter_running?() do
       event =
@@ -401,9 +407,16 @@ defmodule Nopea.Deploy do
 
       Nopea.Events.Emitter.emit(Nopea.Events.Emitter, event)
     end
+
+    metrics_start_time
   end
 
-  defp emit_complete(spec, deploy_id, strategy, duration_ms, verified) do
+  defp emit_complete(spec, deploy_id, strategy, duration_ms, verified, metrics_start_time) do
+    Nopea.Metrics.emit_deploy_complete(metrics_start_time, %{
+      service: spec.service,
+      strategy: strategy
+    })
+
     if emitter_running?() do
       event =
         Nopea.Events.deploy_completed(spec.service, %{
@@ -418,8 +431,8 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time) do
-    Nopea.Metrics.emit_deploy_error(start_time, %{
+  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, metrics_start_time) do
+    Nopea.Metrics.emit_deploy_error(metrics_start_time, %{
       service: spec.service,
       strategy: strategy,
       error: reason
