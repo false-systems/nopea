@@ -2,6 +2,7 @@ defmodule Nopea.ServiceAgentTest do
   use ExUnit.Case
 
   import Mox
+  import Nopea.Test.Helpers
 
   alias Nopea.ServiceAgent
   alias Nopea.Deploy.Spec
@@ -125,14 +126,13 @@ defmodule Nopea.ServiceAgentTest do
       pid = ServiceAgent.ensure_started("crash-svc")
       Process.exit(pid, :kill)
 
-      # Give supervisor time to restart
-      Process.sleep(50)
-
-      {:ok, status} = ServiceAgent.status("crash-svc")
-      assert status.service == "crash-svc"
-      assert status.status == :idle
-      # State resets on crash — deploy_count back to 0
-      assert status.deploy_count == 0
+      # Poll until supervisor restarts the agent
+      assert_eventually do
+        match?(
+          {:ok, %{service: "crash-svc", status: :idle, deploy_count: 0}},
+          ServiceAgent.status("crash-svc")
+        )
+      end
     end
 
     test "recovers last_result from cache after restart" do
@@ -143,26 +143,36 @@ defmodule Nopea.ServiceAgentTest do
       # Kill and let supervisor restart
       [{pid, _}] = Registry.lookup(Nopea.Registry, {:service, "cache-svc"})
       Process.exit(pid, :kill)
-      Process.sleep(50)
 
-      {:ok, status} = ServiceAgent.status("cache-svc")
-      assert status.last_result != nil
-      assert status.last_result.status == :completed
+      # Poll until restarted and cache is restored
+      assert_eventually do
+        case ServiceAgent.status("cache-svc") do
+          {:ok, %{last_result: %{status: :completed}}} -> true
+          _ -> false
+        end
+      end
     end
   end
 
   describe "cooldown after crash" do
     test "delays next queued deploy after worker crash" do
-      # Make apply_manifests crash to trigger the DOWN handler
+      test_pid = self()
+
+      # First call signals then crashes; second just crashes
       Mox.expect(Nopea.K8sMock, :apply_manifests, 2, fn _manifests, _ns ->
+        send(test_pid, :deploy_started)
         raise "boom"
       end)
 
       spec = make_spec("cooldown-svc", manifests: [%{"kind" => "Deployment"}])
 
-      # Fire two deploys concurrently — first will crash, second gets queued
+      # Fire first deploy — it will signal us then crash
       task1 = Task.async(fn -> ServiceAgent.deploy("cooldown-svc", spec) end)
-      Process.sleep(10)
+
+      # Wait until the first deploy actually starts executing
+      assert_receive :deploy_started, 5_000
+
+      # Now enqueue second deploy
       task2 = Task.async(fn -> ServiceAgent.deploy("cooldown-svc", spec) end)
 
       # First deploy fails from crash
@@ -205,8 +215,13 @@ defmodule Nopea.ServiceAgentTest do
           Task.async(fn -> ServiceAgent.deploy("queue-svc", spec) end)
         end
 
-      # Give queued tasks time to reach the agent
-      Process.sleep(50)
+      # Poll until the queue is full
+      assert_eventually do
+        case ServiceAgent.status("queue-svc") do
+          {:ok, %{queue_length: 10}} -> true
+          _ -> false
+        end
+      end
 
       # 11th should be rejected immediately with :queue_full
       overflow_result = ServiceAgent.deploy("queue-svc", spec)
@@ -232,10 +247,11 @@ defmodule Nopea.ServiceAgentTest do
 
       # Simulate the idle timeout firing
       send(pid, :idle_timeout)
-      Process.sleep(50)
 
-      # Agent should have stopped
-      refute Process.alive?(pid)
+      # Poll until agent stops
+      assert_eventually do
+        not Process.alive?(pid)
+      end
     end
 
     test "idle timeout is rescheduled during deploy" do

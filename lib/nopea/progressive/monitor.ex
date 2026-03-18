@@ -118,6 +118,7 @@ defmodule Nopea.Progressive.Monitor do
         state = %{state | rollout: rollout}
 
         if terminal?(rollout.phase) do
+          record_outcome(rollout)
           {:stop, :normal, {:ok, rollout}, state}
         else
           {:reply, {:ok, rollout}, state}
@@ -132,6 +133,7 @@ defmodule Nopea.Progressive.Monitor do
     case do_rollback(state) do
       {:ok, rollout} ->
         state = %{state | rollout: rollout}
+        record_outcome(rollout)
         {:stop, :normal, {:ok, rollout}, state}
 
       {:error, _} = error ->

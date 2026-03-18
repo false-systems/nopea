@@ -52,7 +52,7 @@ defmodule Nopea.Deploy do
     )
 
     # 3. Emit start event
-    emit_start(spec, deploy_id, strategy)
+    metrics_start_time = emit_start(spec, deploy_id, strategy)
 
     # 4. Execute
     case execute_strategy(strategy, spec) do
@@ -60,6 +60,12 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.progressing(deploy_id, spec, strategy, applied, duration_ms)
         start_progressive_monitor(deploy_id, spec, strategy)
+        cache_applied_manifests(spec.service, applied)
+
+        Nopea.Metrics.emit_deploy_complete(metrics_start_time, %{
+          service: spec.service,
+          strategy: strategy
+        })
 
         Logger.info("Deploy progressing",
           service: spec.service,
@@ -73,13 +79,16 @@ defmodule Nopea.Deploy do
       {:ok, applied} ->
         duration_ms = duration_ms(start_time)
 
-        # 5. Verify
+        # 5. Cache applied manifests for drift detection
+        cache_applied_manifests(spec.service, applied)
+
+        # 6. Verify
         verified = verify_deploy(spec, applied)
 
-        # 6. Record success
+        # 7. Record success
         result = Result.success(deploy_id, spec, strategy, applied, duration_ms, verified)
         record_outcome(result, context)
-        emit_complete(spec, deploy_id, strategy, duration_ms, verified)
+        emit_complete(spec, deploy_id, strategy, duration_ms, verified, metrics_start_time)
 
         Logger.info("Deploy completed",
           service: spec.service,
@@ -94,7 +103,7 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.failure(deploy_id, spec, strategy, reason, duration_ms)
         record_outcome(result, context)
-        emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time)
+        emit_failure(spec, deploy_id, strategy, reason, duration_ms, metrics_start_time)
 
         Logger.error("Deploy failed",
           service: spec.service,
@@ -154,19 +163,8 @@ defmodule Nopea.Deploy do
   end
 
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
-
-  defp execute_strategy(strategy, spec) when strategy in [:canary, :blue_green] do
-    case Nopea.Kulta.RolloutBuilder.build(spec, strategy) do
-      {:ok, rollout} ->
-        case k8s_module().apply_manifest(rollout, spec.namespace) do
-          {:ok, applied} -> {:ok, {[applied], :progressing}}
-          {:error, _} = error -> error
-        end
-
-      {:error, _} = error ->
-        error
-    end
-  end
+  defp execute_strategy(:canary, spec), do: Nopea.Strategy.Canary.execute(spec)
+  defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
 
   defp k8s_module do
     Application.get_env(:nopea, :k8s_module, Nopea.K8s)
@@ -231,32 +229,33 @@ defmodule Nopea.Deploy do
         nil
       end
 
-    occurrence = Nopea.Occurrence.build(occurrence_input, memory_context)
+    case Nopea.Occurrence.build(occurrence_input, memory_context) do
+      {:ok, occurrence} ->
+        # Start log emitter and emit key deploy events
+        occurrence = emit_deploy_logs(occurrence, result)
 
-    # Start log emitter and emit key deploy events
-    occurrence = emit_deploy_logs(occurrence, result)
+        # Persist to .nopea/ directory
+        workdir = File.cwd!()
 
-    # Persist to .nopea/ directory
-    workdir = File.cwd!()
+        case Nopea.Occurrence.persist(occurrence, workdir) do
+          :ok ->
+            :ok
 
-    case Nopea.Occurrence.persist(occurrence, workdir) do
-      :ok ->
-        :ok
+          {:error, reason} ->
+            Logger.error("Failed to persist occurrence",
+              service: result.service,
+              deploy_id: result.deploy_id,
+              error: inspect(reason)
+            )
+        end
 
       {:error, reason} ->
-        Logger.error("Failed to persist occurrence",
+        Logger.error("Failed to generate occurrence",
           service: result.service,
           deploy_id: result.deploy_id,
           error: inspect(reason)
         )
     end
-  rescue
-    error ->
-      Logger.error("Failed to generate occurrence: #{Exception.message(error)}",
-        service: result.service,
-        deploy_id: result.deploy_id,
-        error: Exception.format(:error, error, __STACKTRACE__)
-      )
   end
 
   defp emit_deploy_logs(occurrence, result) do
@@ -387,7 +386,8 @@ defmodule Nopea.Deploy do
   end
 
   defp emit_start(spec, deploy_id, strategy) do
-    Nopea.Metrics.emit_deploy_start(%{service: spec.service, strategy: strategy})
+    metrics_start_time =
+      Nopea.Metrics.emit_deploy_start(%{service: spec.service, strategy: strategy})
 
     if emitter_running?() do
       event =
@@ -400,9 +400,16 @@ defmodule Nopea.Deploy do
 
       Nopea.Events.Emitter.emit(Nopea.Events.Emitter, event)
     end
+
+    metrics_start_time
   end
 
-  defp emit_complete(spec, deploy_id, strategy, duration_ms, verified) do
+  defp emit_complete(spec, deploy_id, strategy, duration_ms, verified, metrics_start_time) do
+    Nopea.Metrics.emit_deploy_complete(metrics_start_time, %{
+      service: spec.service,
+      strategy: strategy
+    })
+
     if emitter_running?() do
       event =
         Nopea.Events.deploy_completed(spec.service, %{
@@ -417,8 +424,8 @@ defmodule Nopea.Deploy do
     end
   end
 
-  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, start_time) do
-    Nopea.Metrics.emit_deploy_error(start_time, %{
+  defp emit_failure(spec, deploy_id, strategy, reason, duration_ms, metrics_start_time) do
+    Nopea.Metrics.emit_deploy_error(metrics_start_time, %{
       service: spec.service,
       strategy: strategy,
       error: reason
@@ -482,6 +489,17 @@ defmodule Nopea.Deploy do
       []
     end
   end
+
+  defp cache_applied_manifests(service, applied) when is_list(applied) do
+    if Nopea.Cache.available?() do
+      Enum.each(applied, fn manifest ->
+        key = Nopea.Drift.resource_key(manifest)
+        Nopea.Cache.put_last_applied(service, key, manifest)
+      end)
+    end
+  end
+
+  defp cache_applied_manifests(_service, _applied), do: :ok
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)

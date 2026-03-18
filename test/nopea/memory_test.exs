@@ -28,8 +28,8 @@ defmodule Nopea.MemoryTest do
         error: nil
       })
 
-      # Cast is async, give it a moment
-      Process.sleep(50)
+      # Flush async cast via sync call (BEAM mailbox FIFO ordering)
+      _ = Memory.node_count()
 
       ctx = Memory.get_deploy_context("auth-service", "production")
       assert ctx.service == "auth-service"
@@ -45,7 +45,8 @@ defmodule Nopea.MemoryTest do
         error: {:timeout, "connection refused"}
       })
 
-      Process.sleep(50)
+      # Flush async cast via sync call (BEAM mailbox FIFO ordering)
+      _ = Memory.node_count()
 
       ctx = Memory.get_deploy_context("api-gateway", "staging")
       assert ctx.known == true
@@ -73,8 +74,7 @@ defmodule Nopea.MemoryTest do
         error: nil
       })
 
-      Process.sleep(50)
-
+      # Flush async cast via sync call (BEAM mailbox FIFO ordering)
       # service + namespace
       assert Memory.node_count() == 2
       # depends_on
@@ -94,9 +94,8 @@ defmodule Nopea.MemoryTest do
     test "decay message is handled without crash" do
       # Manually send :decay to trigger the handler
       send(Process.whereis(Memory), :decay)
-      Process.sleep(50)
 
-      # Should still be alive and functional
+      # Flush the :decay handle_info via a sync call
       assert Memory.node_count() == 0
     end
   end

@@ -85,12 +85,21 @@ defmodule Nopea.Drift do
     last_applied_result = cache_module.get_last_applied(service, resource_key)
     live_result = k8s_module.get_resource(api_version, kind, name, namespace)
 
-    case {last_applied_result, live_result} do
-      {{:error, :not_found}, {:error, _}} -> :new_resource
-      {{:error, :not_found}, {:ok, _live}} -> :needs_apply
-      {{:ok, _last}, {:error, _}} -> :new_resource
-      {{:ok, last_applied}, {:ok, live}} -> three_way_diff(last_applied, manifest, live)
-    end
+    result =
+      case {last_applied_result, live_result} do
+        {{:error, :not_found}, {:error, _}} -> :new_resource
+        {{:error, :not_found}, {:ok, _live}} -> :needs_apply
+        {{:ok, _last}, {:error, _}} -> :new_resource
+        {{:ok, last_applied}, {:ok, live}} -> three_way_diff(last_applied, manifest, live)
+      end
+
+    :telemetry.execute(
+      [:nopea, :verify, :drift],
+      %{count: 1},
+      %{service: service}
+    )
+
+    result
   end
 
   @spec compute_hash(map()) :: {:ok, String.t()} | {:error, term()}
@@ -98,6 +107,10 @@ defmodule Nopea.Drift do
     normalized = normalize(manifest)
     {:ok, "sha256:#{do_hash(normalized)}"}
   end
+
+  @doc "Returns a cache key string for a manifest, suitable for Cache.put_last_applied/3."
+  @spec resource_key(map()) :: String.t()
+  def resource_key(manifest), do: Nopea.Applier.resource_key(manifest)
 
   # Private functions
 

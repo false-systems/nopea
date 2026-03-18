@@ -168,6 +168,7 @@ defmodule Nopea.CLI do
       {:ok, _apps} ->
         port = Application.get_env(:nopea, :api_port, 4000)
         Logger.info("Nopea API listening on port #{port}")
+        System.trap_signal(:sigterm, fn -> System.stop(0) end)
         Process.sleep(:infinity)
 
       {:error, reason} ->

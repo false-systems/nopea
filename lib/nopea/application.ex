@@ -28,6 +28,7 @@ defmodule Nopea.Application do
       |> add_memory_child()
       |> add_cluster_child(cluster_enabled)
       |> add_registry_child(cluster_enabled)
+      |> add_distributed_supervisor_child(cluster_enabled)
       |> add_service_agent_child()
       |> add_progressive_child()
       |> add_router_child()
@@ -81,6 +82,11 @@ defmodule Nopea.Application do
       children
     end
   end
+
+  defp add_distributed_supervisor_child(children, false), do: children
+
+  defp add_distributed_supervisor_child(children, true),
+    do: children ++ [Nopea.DistributedSupervisor]
 
   defp add_service_agent_child(children) do
     if Application.get_env(:nopea, :enable_deploy_supervisor, true),

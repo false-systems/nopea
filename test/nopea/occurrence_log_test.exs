@@ -24,13 +24,13 @@ defmodule Nopea.OccurrenceLogTest do
 
   describe "start_log_emitter/1" do
     test "starts a log emitter for the occurrence" do
-      occ = NopeaOccurrence.build(@result)
+      {:ok, occ} = NopeaOccurrence.build(@result)
       emitter = start_emitter(occ)
       assert is_pid(emitter)
     end
 
     test "emitter uses :both mode" do
-      occ = NopeaOccurrence.build(@result)
+      {:ok, occ} = NopeaOccurrence.build(@result)
       emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
@@ -45,7 +45,7 @@ defmodule Nopea.OccurrenceLogTest do
     end
 
     test "emitter sequences entries correctly" do
-      occ = NopeaOccurrence.build(@result)
+      {:ok, occ} = NopeaOccurrence.build(@result)
       emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
@@ -67,7 +67,7 @@ defmodule Nopea.OccurrenceLogTest do
     end
 
     test "entries reference the parent occurrence" do
-      occ = NopeaOccurrence.build(@result)
+      {:ok, occ} = NopeaOccurrence.build(@result)
       emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{
@@ -82,7 +82,7 @@ defmodule Nopea.OccurrenceLogTest do
 
   describe "attach_log_ref/2" do
     test "attaches log_ref with entry count" do
-      occ = NopeaOccurrence.build(@result)
+      {:ok, occ} = NopeaOccurrence.build(@result)
       emitter = start_emitter(occ)
 
       semantic = %FalseProtocol.Semantic{

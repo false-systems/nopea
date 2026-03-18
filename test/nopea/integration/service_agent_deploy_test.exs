@@ -8,6 +8,8 @@ defmodule Nopea.Integration.ServiceAgentDeployTest do
 
   use ExUnit.Case
 
+  import Nopea.Test.Helpers
+
   alias Nopea.ServiceAgent
   alias Nopea.Deploy
   alias Nopea.Deploy.Spec
@@ -82,7 +84,14 @@ defmodule Nopea.Integration.ServiceAgentDeployTest do
 
       pid = ServiceAgent.ensure_started("crash-target")
       Process.exit(pid, :kill)
-      Process.sleep(50)
+
+      # Poll until crash-target has been restarted by supervisor
+      assert_eventually do
+        case ServiceAgent.status("crash-target") do
+          {:ok, %{status: :idle, deploy_count: 0}} -> true
+          _ -> false
+        end
+      end
 
       # Other services still healthy
       {:ok, s1} = ServiceAgent.status("stable-1")
@@ -92,11 +101,6 @@ defmodule Nopea.Integration.ServiceAgentDeployTest do
       {:ok, s2} = ServiceAgent.status("stable-2")
       assert s2.status == :idle
       assert s2.deploy_count == 1
-
-      # Crash-target recovered but lost state
-      {:ok, crashed} = ServiceAgent.status("crash-target")
-      assert crashed.status == :idle
-      assert crashed.deploy_count == 0
     end
   end
 
@@ -150,8 +154,8 @@ defmodule Nopea.Integration.ServiceAgentDeployTest do
 
       Task.await_many(tasks, 10_000)
 
-      # Memory.record_deploy is a cast — give it time
-      Process.sleep(100)
+      # Flush async casts via sync call (BEAM mailbox FIFO ordering)
+      _ = Nopea.Memory.node_count()
 
       Enum.each(services, fn svc ->
         ctx = Nopea.Memory.get_deploy_context(svc, "default")

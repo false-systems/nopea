@@ -98,8 +98,8 @@ defmodule Nopea.DeployIntegrationTest do
 
       Deploy.run(spec)
 
-      # Wait for async cast to complete
-      Process.sleep(50)
+      # Flush async cast via sync call (BEAM mailbox FIFO ordering)
+      _ = Nopea.Memory.node_count()
 
       ctx = Nopea.Memory.get_deploy_context("fragile-svc", "prod")
       assert ctx.known == true

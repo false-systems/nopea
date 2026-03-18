@@ -67,6 +67,19 @@ defmodule Nopea.Metrics do
     start_time
   end
 
+  @spec emit_deploy_complete(integer(), map()) :: :ok
+  def emit_deploy_complete(start_time, metadata) do
+    duration = System.monotonic_time() - start_time
+
+    :telemetry.execute(
+      [:nopea, :deploy, :stop],
+      %{duration: duration},
+      metadata
+    )
+
+    :ok
+  end
+
   @spec emit_deploy_error(integer(), map()) :: :ok
   def emit_deploy_error(start_time, metadata) do
     duration = System.monotonic_time() - start_time

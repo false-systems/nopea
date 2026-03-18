@@ -39,7 +39,7 @@ defmodule Nopea.OccurrenceTest do
 
   describe "build/1 for successful deploys" do
     test "produces valid FALSE Protocol occurrence struct" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
 
       assert %FalseProtocol.Occurrence{} = occ
       assert occ.protocol_version == "1.0"
@@ -52,17 +52,17 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "has no error block on success" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       assert occ.error == nil
     end
 
     test "has no reasoning block on success" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       assert occ.reasoning == nil
     end
 
     test "has history block with steps" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
 
       assert %FalseProtocol.History{} = occ.history
       assert is_list(occ.history.steps)
@@ -75,14 +75,14 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "includes verification step when verified" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
 
       actions = Enum.map(occ.history.steps, & &1.action)
       assert "verify" in actions
     end
 
     test "has deploy_data in data field" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
 
       assert data = occ.data
       assert data["service"] == "auth-service"
@@ -93,12 +93,12 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "sets namespace in context" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       assert occ.context.namespace == "production"
     end
 
     test "builds entities from applied_resources" do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
 
       assert [entity] = occ.context.entities
       assert entity.type == "Deployment"
@@ -112,7 +112,7 @@ defmodule Nopea.OccurrenceTest do
 
   describe "build/1 for failed deploys" do
     test "produces failed occurrence" do
-      occ = Nopea.Occurrence.build(@failed_result)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result)
 
       assert occ.type == "deploy.run.failed"
       assert occ.severity == :error
@@ -120,7 +120,7 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "has error struct with structured details" do
-      occ = Nopea.Occurrence.build(@failed_result)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result)
 
       assert %FalseProtocol.Error{} = occ.error
       assert occ.error.code == "timeout"
@@ -129,14 +129,14 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "error has why_it_matters" do
-      occ = Nopea.Occurrence.build(@failed_result)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result)
 
       assert is_binary(occ.error.why_it_matters)
       assert String.contains?(occ.error.why_it_matters, "production")
     end
 
     test "has reasoning block with low confidence without memory" do
-      occ = Nopea.Occurrence.build(@failed_result)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result)
 
       assert %FalseProtocol.Reasoning{} = occ.reasoning
       assert occ.reasoning.confidence == 0.3
@@ -144,7 +144,7 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "history steps have action and timestamp" do
-      occ = Nopea.Occurrence.build(@failed_result)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result)
 
       [step] = occ.history.steps
       assert step.action == "apply"
@@ -173,7 +173,7 @@ defmodule Nopea.OccurrenceTest do
         ]
       }
 
-      occ = Nopea.Occurrence.build(@failed_result, memory_context)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result, memory_context)
 
       assert %FalseProtocol.Reasoning{} = occ.reasoning
       assert is_binary(occ.reasoning.summary)
@@ -194,7 +194,7 @@ defmodule Nopea.OccurrenceTest do
         recommendations: ["Consider canary deployment."]
       }
 
-      occ = Nopea.Occurrence.build(@failed_result, memory_context)
+      {:ok, occ} = Nopea.Occurrence.build(@failed_result, memory_context)
 
       assert occ.reasoning.explanation =~ "Consider canary deployment."
     end
@@ -203,7 +203,7 @@ defmodule Nopea.OccurrenceTest do
   describe "build/2 with rolledback status" do
     test "produces rolledback type with failure outcome" do
       result = %{@failed_result | status: :rolledback}
-      occ = Nopea.Occurrence.build(result)
+      {:ok, occ} = Nopea.Occurrence.build(result)
 
       assert occ.type == "deploy.run.rolledback"
       assert occ.severity == :warning
@@ -212,7 +212,7 @@ defmodule Nopea.OccurrenceTest do
 
     test "history includes rollback step" do
       result = %{@failed_result | status: :rolledback}
-      occ = Nopea.Occurrence.build(result)
+      {:ok, occ} = Nopea.Occurrence.build(result)
 
       actions = Enum.map(occ.history.steps, & &1.action)
       assert "apply" in actions
@@ -221,7 +221,7 @@ defmodule Nopea.OccurrenceTest do
 
     test "rollback indicated in deploy data" do
       result = %{@failed_result | status: :rolledback}
-      occ = Nopea.Occurrence.build(result)
+      {:ok, occ} = Nopea.Occurrence.build(result)
 
       assert occ.data["service"] == "payment-svc"
     end
@@ -242,7 +242,7 @@ defmodule Nopea.OccurrenceTest do
           ]
       }
 
-      occ = Nopea.Occurrence.build(result)
+      {:ok, occ} = Nopea.Occurrence.build(result)
 
       assert [entity] = occ.context.entities
       assert entity.type == "ConfigMap"
@@ -268,7 +268,7 @@ defmodule Nopea.OccurrenceTest do
           ]
       }
 
-      occ = Nopea.Occurrence.build(result)
+      {:ok, occ} = Nopea.Occurrence.build(result)
 
       assert [entity] = occ.context.entities
       assert entity.name == "valid-svc"
@@ -289,7 +289,7 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "writes occurrence.json to .nopea directory", %{workdir: workdir} do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       assert :ok = Nopea.Occurrence.persist(occ, workdir)
 
       json_path = Path.join([workdir, ".nopea", "occurrence.json"])
@@ -302,7 +302,7 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "writes ETF to occurrences/ directory", %{workdir: workdir} do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       :ok = Nopea.Occurrence.persist(occ, workdir)
 
       etf_dir = Path.join([workdir, ".nopea", "occurrences"])
@@ -314,12 +314,12 @@ defmodule Nopea.OccurrenceTest do
     end
 
     test "returns error when workdir is not writable", _context do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       assert {:error, _reason} = Nopea.Occurrence.persist(occ, "/nonexistent/path/that/fails")
     end
 
     test "ETF round-trips to same struct", %{workdir: workdir} do
-      occ = Nopea.Occurrence.build(@successful_result)
+      {:ok, occ} = Nopea.Occurrence.build(@successful_result)
       :ok = Nopea.Occurrence.persist(occ, workdir)
 
       etf_dir = Path.join([workdir, ".nopea", "occurrences"])

@@ -18,6 +18,13 @@ defmodule Nopea.MCP do
   ## Protocol
 
   JSON-RPC 2.0 over stdin/stdout, newline-delimited.
+
+  ## Lifecycle
+
+  Supports `shutdown` request and `exit` notification per JSON-RPC/MCP spec.
+  The `shutdown` request returns a null result and sets a shutdown flag.
+  The `exit` notification halts the process: exit code 0 if shutdown was
+  received, exit code 1 otherwise.
   """
 
   require Logger
@@ -133,46 +140,89 @@ defmodule Nopea.MCP do
     }
   ]
 
+  @typedoc "Server state tracking lifecycle flags"
+  @type state :: %{shutdown_received: boolean()}
+
+  @doc "Returns initial MCP server state."
+  @spec initial_state() :: state()
+  def initial_state, do: %{shutdown_received: false}
+
   # Public API
 
-  @spec handle_request(map()) :: {:ok, map()}
-  def handle_request(%{"method" => "initialize", "id" => id}) do
-    {:ok,
-     success_response(id, %{
+  @doc """
+  Handle a JSON-RPC request without state tracking.
+
+  Returns `{:ok, response}` where response may be nil for notifications.
+  """
+  @spec handle_request(map()) :: {:ok, map() | nil}
+  def handle_request(request) do
+    {response, _state} = handle_request(request, initial_state())
+    {:ok, response}
+  end
+
+  @doc """
+  Handle a JSON-RPC request with state tracking.
+
+  Returns `{response, new_state}` where response may be nil for notifications,
+  or `:halt` to signal the server should stop (exit notification).
+  """
+  @spec handle_request(map(), state()) :: {map() | nil, state()} | :halt
+  def handle_request(%{"method" => "initialize", "id" => id}, state) do
+    {success_response(id, %{
        "protocolVersion" => @protocol_version,
        "serverInfo" => %{"name" => "nopea", "version" => @version},
        "capabilities" => %{
          "tools" => %{"listChanged" => false}
        }
-     })}
+     }), state}
   end
 
-  def handle_request(%{"method" => "tools/list", "id" => id}) do
-    {:ok, success_response(id, %{"tools" => @tools})}
+  def handle_request(%{"method" => "shutdown", "id" => id}, state) do
+    {success_response(id, nil), %{state | shutdown_received: true}}
   end
 
-  def handle_request(%{"method" => "tools/call", "id" => id, "params" => params}) do
+  def handle_request(%{"method" => "exit"}, %{shutdown_received: true}) do
+    :halt
+  end
+
+  def handle_request(%{"method" => "exit"}, %{shutdown_received: false}) do
+    :halt
+  end
+
+  def handle_request(%{"method" => "tools/list", "id" => id}, state) do
+    {success_response(id, %{"tools" => @tools}), state}
+  end
+
+  def handle_request(%{"method" => "tools/call", "id" => id, "params" => params}, state) do
     tool_name = params["name"]
     arguments = params["arguments"] || %{}
 
     case call_tool(tool_name, arguments) do
       {:ok, text} ->
-        {:ok,
-         success_response(id, %{
+        {success_response(id, %{
            "content" => [%{"type" => "text", "text" => text}]
-         })}
+         }), state}
 
       {:error, message} ->
-        {:ok, error_response(id, -32_602, message)}
+        {error_response(id, -32_602, message), state}
     end
   end
 
-  def handle_request(%{"method" => "notifications/initialized"}) do
-    {:ok, nil}
+  def handle_request(%{"method" => "notifications/initialized"}, state) do
+    {nil, state}
   end
 
-  def handle_request(%{"id" => id}) do
-    {:ok, error_response(id, -32_601, "Method not found")}
+  def handle_request(%{"method" => "notifications/cancelled"} = request, state) do
+    Logger.info("MCP notification cancelled",
+      request_id: get_in(request, ["params", "id"]),
+      reason: get_in(request, ["params", "reason"])
+    )
+
+    {nil, state}
+  end
+
+  def handle_request(%{"id" => id}, state) do
+    {error_response(id, -32_601, "Method not found"), state}
   end
 
   @spec encode(map()) :: binary()
@@ -187,25 +237,41 @@ defmodule Nopea.MCP do
 
   @doc """
   Run the MCP server loop reading from stdin, writing to stdout.
+
+  Tracks shutdown state across requests using `Enum.reduce_while/3`.
+  On `exit` notification after `shutdown`, halts with exit code 0.
+  On `exit` without prior `shutdown`, halts with exit code 1.
   """
   @spec serve() :: :ok
   def serve do
-    IO.stream(:stdio, :line)
-    |> Stream.each(&handle_line/1)
-    |> Stream.run()
+    _final_state =
+      IO.stream(:stdio, :line)
+      |> Enum.reduce_while(initial_state(), fn line, state ->
+        case decode(line) do
+          {:ok, request} ->
+            dispatch(request, state)
+
+          {:error, _} ->
+            IO.write(encode(error_response(nil, -32_700, "Parse error")))
+            {:cont, state}
+        end
+      end)
+
+    :ok
   end
 
-  defp handle_line(line) do
-    case decode(line) do
-      {:ok, request} -> dispatch(request)
-      {:error, _} -> IO.write(encode(error_response(nil, -32_700, "Parse error")))
-    end
-  end
+  defp dispatch(request, state) do
+    case handle_request(request, state) do
+      :halt ->
+        exit_code = if state.shutdown_received, do: 0, else: 1
+        System.halt(exit_code)
 
-  defp dispatch(request) do
-    case handle_request(request) do
-      {:ok, nil} -> :ok
-      {:ok, response} -> IO.write(encode(response))
+      {nil, new_state} ->
+        {:cont, new_state}
+
+      {response, new_state} ->
+        IO.write(encode(response))
+        {:cont, new_state}
     end
   end
 
