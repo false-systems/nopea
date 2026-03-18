@@ -60,6 +60,7 @@ defmodule Nopea.Deploy do
         duration_ms = duration_ms(start_time)
         result = Result.progressing(deploy_id, spec, strategy, applied, duration_ms)
         start_progressive_monitor(deploy_id, spec, strategy)
+        cache_applied_manifests(spec.service, applied)
 
         Nopea.Metrics.emit_deploy_complete(metrics_start_time, %{
           service: spec.service,
@@ -78,10 +79,13 @@ defmodule Nopea.Deploy do
       {:ok, applied} ->
         duration_ms = duration_ms(start_time)
 
-        # 5. Verify
+        # 5. Cache applied manifests for drift detection
+        cache_applied_manifests(spec.service, applied)
+
+        # 6. Verify
         verified = verify_deploy(spec, applied)
 
-        # 6. Record success
+        # 7. Record success
         result = Result.success(deploy_id, spec, strategy, applied, duration_ms, verified)
         record_outcome(result, context)
         emit_complete(spec, deploy_id, strategy, duration_ms, verified, metrics_start_time)
@@ -496,6 +500,17 @@ defmodule Nopea.Deploy do
       []
     end
   end
+
+  defp cache_applied_manifests(service, applied) when is_list(applied) do
+    if Nopea.Cache.available?() do
+      Enum.each(applied, fn manifest ->
+        key = Nopea.Drift.resource_key(manifest)
+        Nopea.Cache.put_last_applied(service, key, manifest)
+      end)
+    end
+  end
+
+  defp cache_applied_manifests(_service, _applied), do: :ok
 
   defp duration_ms(start_time) do
     System.convert_time_unit(System.monotonic_time() - start_time, :native, :millisecond)

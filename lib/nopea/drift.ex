@@ -108,6 +108,10 @@ defmodule Nopea.Drift do
     {:ok, "sha256:#{do_hash(normalized)}"}
   end
 
+  @doc "Returns a cache key string for a manifest, suitable for Cache.put_last_applied/3."
+  @spec resource_key(map()) :: String.t()
+  def resource_key(manifest), do: Nopea.Applier.resource_key(manifest)
+
   # Private functions
 
   defp strip_status(manifest), do: Map.delete(manifest, "status")
