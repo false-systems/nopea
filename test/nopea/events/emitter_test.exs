@@ -1,6 +1,8 @@
 defmodule Nopea.Events.EmitterTest do
   use ExUnit.Case, async: true
 
+  import Nopea.Test.Helpers
+
   alias Nopea.Events
   alias Nopea.Events.Emitter
 
@@ -124,11 +126,11 @@ defmodule Nopea.Events.EmitterTest do
 
       Emitter.emit(pid, event)
 
-      # Wait for retries
-      Process.sleep(100)
-
-      state = Emitter.get_state(pid)
-      assert state.dropped_count == 1
+      # Poll until the emitter has processed all retries and dropped the event
+      assert_eventually do
+        state = Emitter.get_state(pid)
+        state.dropped_count == 1
+      end
     end
   end
 

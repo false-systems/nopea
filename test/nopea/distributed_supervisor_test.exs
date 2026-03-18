@@ -9,6 +9,8 @@ defmodule Nopea.DistributedSupervisorTest do
 
   use ExUnit.Case, async: false
 
+  import Nopea.Test.Helpers
+
   alias Nopea.{DistributedRegistry, DistributedSupervisor}
 
   @moduletag :distributed
@@ -133,9 +135,10 @@ defmodule Nopea.DistributedSupervisorTest do
       # Process should be dead
       refute Process.alive?(pid)
 
-      # Registry should clean up
-      Process.sleep(100)
-      assert {:error, :not_found} = DistributedRegistry.lookup(key)
+      # Poll until registry cleans up
+      assert_eventually do
+        {:error, :not_found} == DistributedRegistry.lookup(key)
+      end
     end
   end
 
