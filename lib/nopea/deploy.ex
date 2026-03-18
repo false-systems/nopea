@@ -163,19 +163,8 @@ defmodule Nopea.Deploy do
   end
 
   defp execute_strategy(:direct, spec), do: Nopea.Strategy.Direct.execute(spec)
-
-  defp execute_strategy(strategy, spec) when strategy in [:canary, :blue_green] do
-    case Nopea.Kulta.RolloutBuilder.build(spec, strategy) do
-      {:ok, rollout} ->
-        case k8s_module().apply_manifest(rollout, spec.namespace) do
-          {:ok, applied} -> {:ok, {[applied], :progressing}}
-          {:error, _} = error -> error
-        end
-
-      {:error, _} = error ->
-        error
-    end
-  end
+  defp execute_strategy(:canary, spec), do: Nopea.Strategy.Canary.execute(spec)
+  defp execute_strategy(:blue_green, spec), do: Nopea.Strategy.BlueGreen.execute(spec)
 
   defp k8s_module do
     Application.get_env(:nopea, :k8s_module, Nopea.K8s)
