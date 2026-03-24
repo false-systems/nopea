@@ -36,7 +36,8 @@ defmodule Nopea.Metrics do
       distribution("nopea.memory.query.duration",
         unit: {:native, :second},
         description: "Memory context query duration",
-        tags: [:service]
+        tags: [:service],
+        reporter_options: [buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]]
       ),
 
       # Drift verification

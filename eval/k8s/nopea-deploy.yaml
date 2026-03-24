@@ -1,0 +1,102 @@
+# Minimal Nopea deployment for oracle evaluation
+# Starts Nopea with HTTP API enabled, no clustering
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nopea-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nopea
+  namespace: nopea-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nopea-deployer
+rules:
+  # Nopea needs to apply manifests to the cluster
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nopea-deployer
+subjects:
+  - kind: ServiceAccount
+    name: nopea
+    namespace: nopea-system
+roleRef:
+  kind: ClusterRole
+  name: nopea-deployer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nopea
+  namespace: nopea-system
+  labels:
+    app: nopea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nopea
+  template:
+    metadata:
+      labels:
+        app: nopea
+    spec:
+      serviceAccountName: nopea
+      containers:
+        - name: nopea
+          image: nopea:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+              name: http
+          env:
+            - name: NOPEA_ENABLE_ROUTER
+              value: "true"
+            - name: NOPEA_API_PORT
+              value: "4000"
+            - name: RELEASE_DISTRIBUTION
+              value: "none"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 4000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nopea
+  namespace: nopea-system
+  labels:
+    app: nopea
+spec:
+  selector:
+    app: nopea
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http

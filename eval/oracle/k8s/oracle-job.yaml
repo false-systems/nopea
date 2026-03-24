@@ -1,0 +1,83 @@
+# Oracle ground-truth test Job for Nopea
+#
+# Runs 100 numbered test cases against a live Nopea instance.
+# Deploy Nopea first, then apply this Job.
+#
+# Usage:
+#   kubectl apply -f eval/oracle/k8s/oracle-job.yaml
+#   kubectl logs -f job/nopea-oracle -n nopea-system
+#
+# The Job succeeds (exit 0) if all oracle cases pass,
+# fails (exit 1) if any case fails.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nopea-oracle
+  namespace: nopea-system
+  labels:
+    app: nopea-oracle
+    component: eval
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: nopea-oracle
+        component: eval
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: oracle
+          image: nopea-oracle:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Point at the Nopea service in the same namespace
+            - name: NOPEA_URL
+              value: "http://nopea:4000"
+            # API key — mount from secret if auth is enabled
+            - name: NOPEA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nopea-oracle-config
+                  key: api-key
+                  optional: true
+            # Settlement time — increase in slow clusters
+            - name: NOPEA_SETTLE_MS
+              value: "2000"
+          command: ["mix", "test", "--no-start", "--color", "--exclude", "mcp"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      # Wait for Nopea to be ready before running
+      initContainers:
+        - name: wait-for-nopea
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Nopea to be ready..."
+              until wget -qO- http://nopea:4000/health > /dev/null 2>&1; do
+                echo "Nopea not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Nopea is ready."
+---
+# Optional: Secret for API key (create only if auth is enabled)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nopea-oracle-config
+  namespace: nopea-system
+  labels:
+    app: nopea-oracle
+    component: eval
+type: Opaque
+stringData:
+  # Set this to your NOPEA_API_KEY value, or leave empty for dev mode
+  api-key: ""

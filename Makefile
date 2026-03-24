@@ -1,4 +1,4 @@
-.PHONY: all build rust elixir test docker deploy clean
+.PHONY: all build rust elixir test docker deploy clean oracle-docker oracle-kind-load oracle-run oracle-local oracle-logs eval
 
 # Variables
 IMAGE_NAME ?= nopea
@@ -39,7 +39,11 @@ test: test-rust test-elixir
 # Build Docker image
 docker:
 	@echo "Building Docker image $(IMAGE_NAME):$(IMAGE_TAG)..."
+	@echo "Copying false-protocol dependency into build context..."
+	rm -rf false-protocol-elixir
+	cp -r ../false-protocol/elixir false-protocol-elixir
 	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	rm -rf false-protocol-elixir
 	@echo "Docker image built"
 
 # Load image to kind cluster
@@ -149,3 +153,64 @@ help:
 	@echo "  dev-setup      - Full development setup (kind + deploy)"
 	@echo "  logs           - Show controller logs"
 	@echo "  status         - Show deployment status"
+	@echo ""
+	@echo "Oracle (eval):"
+	@echo "  oracle-docker  - Build oracle Docker image"
+	@echo "  oracle-run     - Run oracle against K8s Nopea"
+	@echo "  oracle-local   - Run oracle against localhost:4000"
+	@echo "  oracle-logs    - Show oracle job logs"
+	@echo "  eval           - Full eval: deploy Nopea + run oracle"
+
+# ─────────────────────────────────────────────────────────────────
+# ORACLE — Ground-truth tests against live Nopea
+# ─────────────────────────────────────────────────────────────────
+
+ORACLE_IMAGE ?= nopea-oracle
+ORACLE_TAG ?= latest
+
+# Build oracle Docker image
+oracle-docker:
+	@echo "Building oracle image $(ORACLE_IMAGE):$(ORACLE_TAG)..."
+	docker build -t $(ORACLE_IMAGE):$(ORACLE_TAG) eval/oracle/
+	@echo "Oracle image built"
+
+# Load oracle image to kind cluster
+oracle-kind-load: oracle-docker
+	@echo "Loading oracle image to kind cluster..."
+	kind load docker-image $(ORACLE_IMAGE):$(ORACLE_TAG) --name nopea
+	@echo "Oracle image loaded to kind"
+
+# Run oracle against live K8s Nopea
+oracle-run: oracle-kind-load
+	@echo "Deleting previous oracle job (if any)..."
+	-kubectl delete job nopea-oracle -n $(NAMESPACE) 2>/dev/null
+	@echo "Running oracle..."
+	kubectl apply -f eval/oracle/k8s/oracle-job.yaml
+	@echo "Waiting for oracle to complete..."
+	kubectl wait --for=condition=complete --timeout=300s job/nopea-oracle -n $(NAMESPACE) || \
+		(echo "Oracle FAILED — check logs:" && \
+		 kubectl logs job/nopea-oracle -n $(NAMESPACE) && exit 1)
+	@echo "Oracle PASSED"
+
+# Show oracle logs
+oracle-logs:
+	kubectl logs job/nopea-oracle -n $(NAMESPACE) -f
+
+# Run oracle locally against localhost:4000
+oracle-local:
+	@echo "Running oracle locally..."
+	cd eval/oracle && mix test --no-start --exclude mcp
+
+# Deploy Nopea for eval (minimal, HTTP API only)
+eval-deploy: docker
+	@echo "Loading Nopea image to kind..."
+	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name nopea
+	@echo "Deploying Nopea for eval..."
+	kubectl apply -f eval/k8s/nopea-deploy.yaml
+	@echo "Waiting for Nopea to be ready..."
+	kubectl rollout status deployment/nopea -n $(NAMESPACE) --timeout=120s
+	@echo "Nopea deployed and ready"
+
+# Full eval: deploy Nopea + run oracle
+eval: eval-deploy oracle-run
+	@echo "Full eval complete"
