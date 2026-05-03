@@ -19,7 +19,7 @@ Nopea is a deployment tool that builds a knowledge graph from every deployment. 
 mix format && mix compile --warnings-as-errors && mix test
 
 # Individual commands
-mix test                                    # 305 tests, 0 failures
+mix test                                    # full suite
 mix test test/nopea/deploy_test.exs         # Single file
 mix test test/nopea/deploy_test.exs:106     # Single test by line number
 mix test --exclude integration --exclude cluster  # Skip slow tests
@@ -29,6 +29,17 @@ mix escript.build                           # CLI binary → ./nopea
 ```
 
 Tests exclude `:integration` and `:cluster` tags by default (configured in `test_helper.exs`).
+
+### Makefile shortcuts (cluster work)
+
+```bash
+make build           # mix deps.get + mix compile
+make docker          # build image; copies ../false-protocol/elixir into context
+make kind-load       # docker + kind load docker-image
+make dev-setup       # kind-create + kind-load + deploy
+make eval            # eval-deploy + oracle-run (full live eval)
+make oracle-local    # run oracle suite against localhost:4000
+```
 
 ---
 
@@ -68,6 +79,10 @@ HTTP (router.ex) → Surface.*()
 
 Key design: Surface handles graceful degradation when optional subsystems aren't running (e.g., returns `{:error, :unavailable}` if Cache is down rather than crashing).
 
+**API auth**: `Nopea.API.AuthPlug` enforces an `x-api-key` header against `Application.get_env(:nopea, :api_key)`. If `:api_key` is `nil` (dev mode), all requests pass. `/health` and `/ready` are always allowed.
+
+**Resource identity**: `Nopea.Domain.ResourceKey` (`Kind/Namespace/Name`) is the canonical struct passed between Applier, Cache, Drift, and Events — prefer it over raw strings.
+
 ---
 
 ## OTP SUPERVISION TREE
@@ -88,7 +103,7 @@ Nopea.Application
 
 ### Configuration Feature Flags
 
-Most children are optional, controlled by `Application.get_env(:nopea, key)`:
+Most children are optional, controlled by `Application.get_env(:nopea, key)`. In `:prod`, most flags are populated from `NOPEA_*` env vars by `config/runtime.exs` (e.g., `NOPEA_ENABLE_ROUTER`, `NOPEA_API_KEY`, `NOPEA_API_PORT`, `NOPEA_CLUSTER_*`).
 
 | Key | Default | Controls |
 |-----|---------|----------|
@@ -148,6 +163,8 @@ Per-service GenServer that queues and serializes deploys:
 ## MEMORY SYSTEM
 
 Knowledge graph stored in `Nopea.Memory` GenServer state, persisted to `.nopea/graph.etf`.
+
+The graph implementation lives in `lib/nopea/graph/` (`Node`, `Relationship`, `Identity`, `EWMA`, `NodeKind`, `RelationType`) — it is **in-tree**, not an external dependency.
 
 **Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
 **Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
@@ -277,11 +294,26 @@ JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_h
 
 ---
 
+## ORACLE — GROUND-TRUTH EVAL SUITE
+
+`eval/oracle/` is a **standalone Mix project** that imports nothing from Nopea internals. It tests a live Nopea instance through public interfaces only (HTTP API + MCP). Oracle failures are treated as architectural signals, not bug reports.
+
+**Run modes:**
+- Against `localhost:4000`: `make oracle-local` (or `cd eval/oracle && mix test --exclude mcp`)
+- Against kind-deployed Nopea: `make oracle-run` (builds image, loads to kind, runs Job, waits)
+- Full eval (deploy + run): `make eval`
+
+**Configured via env:** `NOPEA_URL`, `NOPEA_API_KEY`, `NOPEA_MCP_BINARY`, `NOPEA_SETTLE_MS`.
+
+Test files are numbered (`case_001_health_test.exs` … `case_091_observability_test.exs`) covering health, auth, deploy errors/correctness, memory, progressive, resilience, MCP, and observability.
+
+---
+
 ## DEPENDENCIES
 
 | Package | Purpose |
 |---------|---------|
-| `false_protocol` | FALSE Protocol occurrence generation |
+| `false_protocol` | FALSE Protocol occurrence generation (path dep `../false-protocol/elixir`; Docker build copies it into context) |
 | `k8s` | Kubernetes client |
 | `yaml_elixir` | YAML parsing |
 | `jason` | JSON |
@@ -292,6 +324,17 @@ JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_h
 | `telemetry` + `prometheus_core` | Observability |
 | `mox` | Test mocking (test only) |
 | `credo` | Linting (dev/test only) |
+
+---
+
+## ENFORCED CONVENTIONS (pre-commit)
+
+`scripts/setup-hooks.sh` installs `.git/hooks/pre-commit` that **rejects** commits with:
+- `raise "..."` in `lib/` (use `{:error, reason}` tuples)
+- `IO.puts` / `IO.inspect` in `lib/` (use `Logger`)
+- `TODO` / `FIXME` in `lib/` (complete or remove)
+
+The hook also runs `mix format --check-formatted`, `mix credo --strict`, and `mix test`. CI (`.github/workflows/ci.yml`) runs the same checks.
 
 ---
 

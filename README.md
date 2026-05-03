@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/elixir-1.14%2B-purple.svg)](https://elixir-lang.org)
-[![Tests](https://img.shields.io/badge/tests-235%20passing-green.svg)]()
+[![Tests](https://img.shields.io/badge/tests-passing-green.svg)]()
 
 Every deployment tool treats each deploy as the first deploy ever. Nopea remembers.
 
@@ -49,7 +49,6 @@ mix escript.build
 **Requirements:**
 - Elixir 1.14+
 - Kubernetes 1.22+ (for server-side apply)
-- [Kerto](https://github.com/yairfalse/kerto) (knowledge graph, path dependency)
 
 ---
 
@@ -64,7 +63,7 @@ mix escript.build
    → unknown service? → direct
 4. Deploy executes (K8s server-side apply)
 5. Post-deploy verification (three-way drift check)
-6. Memory records outcome → KERTO graph updated
+6. Memory records outcome → graph updated
 7. FALSE Protocol occurrence written to .nopea/
 8. Next deploy starts at step 2 with MORE context
 ```
@@ -75,7 +74,7 @@ mix escript.build
 
 | Feature | Description |
 |---------|-------------|
-| **Memory** | KERTO knowledge graph learns from every deploy |
+| **Memory** | Knowledge graph learns from every deploy |
 | **Strategy Selection** | Auto-selects direct/canary/blue-green based on history |
 | **Post-Deploy Verification** | Three-way drift detection confirms deploy applied correctly |
 | **FALSE Protocol** | Structured occurrences for AI consumption |
@@ -97,7 +96,7 @@ mix escript.build
 │  ├── ULID           (monotonic ID generator)                     │
 │  ├── Metrics        (Telemetry + Prometheus)                     │
 │  ├── Events.Emitter (async CDEvents with retry)                  │
-│  ├── Memory         (KERTO graph — the brain)                    │
+│  ├── Memory         (knowledge graph — the brain)                │
 │  ├── Cache          (ETS deployment state)                       │
 │  ├── Registry       (process registry)                           │
 │  ├── Deploy.Supervisor (DynamicSupervisor for workers)           │
@@ -162,7 +161,7 @@ GET  /api/history/:svc    → deployment history
 | **Canary** | Auto: failure patterns > 15% confidence | Gradual rollout (10→25→50→75→100%) |
 | **Blue-Green** | Explicit or future auto-selection | Deploy to inactive slot, instant cutover |
 
-Strategy auto-selection uses the KERTO graph:
+Strategy auto-selection uses the knowledge graph:
 
 ```elixir
 # Memory shows this service has failed before with high confidence
@@ -200,15 +199,18 @@ nopea/
 │   ├── deploy.ex               # Orchestration entry point
 │   ├── deploy/
 │   │   ├── spec.ex             # DeploySpec struct
-│   │   ├── result.ex           # DeployResult struct
-│   │   ├── worker.ex           # Per-deploy GenServer
-│   │   └── supervisor.ex       # DynamicSupervisor
+│   │   └── result.ex           # DeployResult struct
+│   ├── service_agent.ex        # Per-service queueing GenServer
+│   ├── service_agent/supervisor.ex  # DynamicSupervisor for ServiceAgents
+│   ├── progressive/            # Rollout monitor + supervisor
+│   ├── memory/                 # Ingestor + Query
+│   ├── graph/                  # In-tree knowledge graph (Node, Relationship, EWMA, …)
 │   ├── strategy.ex             # Strategy behaviour
 │   ├── strategy/
 │   │   ├── direct.ex           # Immediate apply
 │   │   ├── canary.ex           # Gradual rollout
 │   │   └── blue_green.ex       # Slot-based cutover
-│   ├── memory.ex               # KERTO graph GenServer
+│   ├── memory.ex               # Knowledge graph GenServer
 │   ├── memory/
 │   │   ├── ingestor.ex         # Deploy events → graph ops
 │   │   └── query.ex            # Context queries
@@ -229,7 +231,7 @@ nopea/
 │   ├── cluster.ex              # libcluster (optional)
 │   ├── distributed_supervisor.ex  # Horde (optional)
 │   └── distributed_registry.ex    # Horde (optional)
-├── test/                       # 235 tests
+├── test/                       # full ExUnit suite
 ├── config/
 └── mix.exs
 ```
@@ -240,7 +242,7 @@ nopea/
 
 ```bash
 mix deps.get
-mix test                     # 235 tests
+mix test                     # full suite
 mix compile --warnings-as-errors
 mix format --check-formatted
 mix credo
@@ -254,7 +256,6 @@ mix escript.build            # build CLI binary
 | Component | Purpose |
 |-----------|---------|
 | **Elixir** | OTP supervision, GenServers, ETS |
-| [kerto](https://github.com/yairfalse/kerto) | Knowledge graph (EWMA, content-addressed) |
 | [k8s](https://hex.pm/packages/k8s) | Kubernetes client |
 | [yaml_elixir](https://hex.pm/packages/yaml_elixir) | YAML parsing |
 | [jason](https://hex.pm/packages/jason) | JSON encoding |
