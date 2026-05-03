@@ -106,9 +106,18 @@ Cluster work via `Makefile`: `make build`, `make docker`, `make kind-load`, `mak
 | act | `Strategy.{Direct, Canary, BlueGreen}.execute/1` |
 | verify | `Drift.verify_manifest/3` (direct) or `Progressive.Monitor` (canary / blue-green) |
 | learn | `Memory.record_deploy/1` (async cast → memory + persistence) |
-| occur | `Occurrence.build/persist` (FALSE Protocol, every execution) |
 
 `Deploy.deploy/1` is the only valid external entry point. It routes through `ServiceAgent` for per-service serialization. Never call `Deploy.run/1` directly from outside.
+
+Every traversal of the loop also produces a FALSE Protocol occurrence (`Occurrence.build/persist`), persisted under `.nopea/`. This is enforced by invariant 1, not by the loop itself.
+
+### Per-target queueing
+
+`ServiceAgent` queues deploys per service. When a service's queue is saturated, `Deploy.deploy/1` returns `{:error, :queue_full}` rather than dropping or blocking. The CLI, MCP, and HTTP surfaces all surface this error verbatim.
+
+### Persistence
+
+Memory is persisted to `.nopea/graph.etf`. Restore order on startup: ETS snapshot → disk → fresh state. Wiping the file resets memory.
 
 ### Module map
 
