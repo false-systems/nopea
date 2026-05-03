@@ -1,278 +1,119 @@
-# NOPEA
+# Nopea
 
-**AI-native deployment tool with memory**
+> Every deployment tool treats each deploy as the first deploy ever. Nopea remembers.
+
+Nopea executes system changes with memory. Past outcomes shape how future changes run.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/elixir-1.14%2B-purple.svg)](https://elixir-lang.org)
-[![Tests](https://img.shields.io/badge/tests-passing-green.svg)]()
-
-Every deployment tool treats each deploy as the first deploy ever. Nopea remembers.
 
 ---
 
-## What Is This?
+## What Nopea is
 
-Nopea is a deployment tool that builds a knowledge graph from every deployment. Each deploy makes the next one smarter.
+Nopea is a memory-backed convergence controller for system changes.
 
-```
-Deploy #1: direct apply (no history)
-Deploy #2: direct apply (1 success recorded)
-Deploy #3: FAILED — recorded failure pattern
-Deploy #4: auto-selects canary strategy (learned from #3)
-Deploy #5: canary succeeds — confidence updated
-```
+It executes changes — today, Kubernetes deployments — and records what happened. Each subsequent execution is informed by what came before.
 
-The graph learns patterns like: *"auth-service deploys fail when redis is also updating"* (0.85 confidence, seen 4 times). Next time an AI agent deploys auth-service, it gets warned.
+Deployments are the entry point. They are not the limit of what Nopea is meant to do.
 
 ---
 
-## Quick Start
+## The shift
+
+Traditional deploy tools are stateless. Each run starts from zero. The same failure can recur indefinitely because nothing in the loop remembers it happened.
+
+Nopea is stateful by design:
+
+- it accumulates outcomes from every execution
+- it recognizes recurring conditions in the systems it operates on
+- it adapts how it executes based on what it has seen before
+
+The system is not just running changes. It is building operational knowledge of the systems it changes.
+
+---
+
+## How it works
+
+```
+intent → context → plan → execute → verify → learn
+```
+
+1. **intent** — a request to change a system arrives (deploy, rollback, promote)
+2. **context** — Nopea consults what it has recorded about the target
+3. **plan** — a strategy is selected, informed by context
+4. **execute** — the change is applied
+5. **verify** — convergence is confirmed
+6. **learn** — the outcome is recorded; the next loop starts smarter
+
+Every operation traverses every stage. There is no fast path that skips context or verification.
+
+---
+
+## Memory model
+
+Nopea records what happens during every execution: what was changed, what was changing alongside it, and how it ended.
+
+Over time, repeated conditions become recognizable patterns. A pattern might be:
+
+> auth-service deployment failed when Redis was updated at the same time.
+
+The next time auth-service is deployed under similar conditions, that pattern is part of the context for the new execution.
+
+There is no separate memory product to install. Memory is part of Nopea.
+
+---
+
+## Usage
 
 ```bash
 # Build
 mix deps.get
 mix escript.build
 
-# Deploy manifests
-./nopea deploy -f manifests/ -s my-app -n default
+# Execute a change
+nopea deploy -f manifests/ -s my-app -n default
 
-# Check what Nopea learned
-./nopea context my-app --json
+# See what Nopea has accumulated about a service
+nopea context my-app
 
-# Deploy again — strategy selected based on memory
-./nopea deploy -f manifests/ -s my-app -n default
-
-# See deployment history
-./nopea history my-app
+# Past outcomes for this service
+nopea history my-app
 ```
 
-**Requirements:**
+The second command shows what Nopea has recorded about `my-app`. The next deploy uses it. Every run after the first is informed by the runs before.
+
+The same execution surface is reachable from CLI, MCP (for AI agents), and HTTP API — they all delegate to the same loop.
+
+---
+
+## Sykli integration
+
+Sykli defines execution graphs: ordered, conditional flows of system changes.
+
+Nopea executes the deployment-related nodes inside those graphs, with memory.
+
+Sykli decides what should run, in what order, under what conditions. Nopea decides, given memory, how a particular change should be executed.
+
+---
+
+## What you get
+
+- failures that have happened before influence how future executions are run
+- strategy selection is grounded in your system's actual history, not a config default
+- operational knowledge accumulates instead of being lost between runs
+
+---
+
+## Requirements
+
 - Elixir 1.14+
-- Kubernetes 1.22+ (for server-side apply)
-
----
-
-## The Memory Loop
-
-```
-1. Deploy request arrives (CLI / MCP / HTTP API / SYKLI)
-2. Memory.get_deploy_context("my-app", "prod")
-   → failure_rate, dependencies, risky patterns, recommendations
-3. Strategy auto-selected based on context
-   → high failure rate? → canary
-   → unknown service? → direct
-4. Deploy executes (K8s server-side apply)
-5. Post-deploy verification (three-way drift check)
-6. Memory records outcome → graph updated
-7. FALSE Protocol occurrence written to .nopea/
-8. Next deploy starts at step 2 with MORE context
-```
-
----
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| **Memory** | Knowledge graph learns from every deploy |
-| **Strategy Selection** | Auto-selects direct/canary/blue-green based on history |
-| **Post-Deploy Verification** | Three-way drift detection confirms deploy applied correctly |
-| **FALSE Protocol** | Structured occurrences for AI consumption |
-| **MCP Server** | Model Context Protocol for AI agent integration |
-| **HTTP API** | REST endpoints for SYKLI and external tools |
-| **CLI** | `nopea deploy`, `nopea context`, `nopea history` |
-| **CDEvents** | Async deployment events with retry queue |
-| **ETS Cache** | In-memory deployment state, no external deps |
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         BEAM VM                                  │
-│                                                                  │
-│  OTP Supervision Tree                                            │
-│  ├── ULID           (monotonic ID generator)                     │
-│  ├── Metrics        (Telemetry + Prometheus)                     │
-│  ├── Events.Emitter (async CDEvents with retry)                  │
-│  ├── Memory         (knowledge graph — the brain)                │
-│  ├── Cache          (ETS deployment state)                       │
-│  ├── Registry       (process registry)                           │
-│  ├── Deploy.Supervisor (DynamicSupervisor for workers)           │
-│  └── API.Router     (Plug/Cowboy HTTP, optional)                 │
-│                                                                  │
-│  Deploy Flow                                                     │
-│  CLI/MCP/API → Deploy.run(spec)                                  │
-│       → Memory.get_deploy_context()                              │
-│       → select_strategy()                                        │
-│       → Strategy.Direct/Canary/BlueGreen.execute()               │
-│       → K8s.apply_manifests() (server-side apply)                │
-│       → Drift.verify_manifest() (post-deploy check)              │
-│       → Memory.record_deploy() (graph update)                    │
-│       → Occurrence.build() + persist() (FALSE Protocol)          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Interfaces
-
-### CLI
-
-```bash
-nopea deploy -f <path> -s <service> -n <namespace> [--strategy direct|canary|blue_green]
-nopea status <service>
-nopea context <service> [--json]
-nopea history <service>
-nopea memory
-nopea serve          # daemon mode with HTTP API
-```
-
-### MCP Server
-
-```json
-{
-  "mcpServers": {
-    "nopea": { "command": "nopea", "args": ["mcp"] }
-  }
-}
-```
-
-Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_explain`
-
-### HTTP API
-
-```
-GET  /health              → {"status": "ok"}
-GET  /ready               → {"status": "ready"}
-POST /api/deploy          → deploy manifests
-GET  /api/context/:svc    → memory context
-GET  /api/history/:svc    → deployment history
-```
-
----
-
-## Deployment Strategies
-
-| Strategy | When Selected | How It Works |
-|----------|---------------|--------------|
-| **Direct** | Default, low-risk services | Apply all manifests immediately |
-| **Canary** | Auto: failure patterns > 15% confidence | Gradual rollout (10→25→50→75→100%) |
-| **Blue-Green** | Explicit or future auto-selection | Deploy to inactive slot, instant cutover |
-
-Strategy auto-selection uses the knowledge graph:
-
-```elixir
-# Memory shows this service has failed before with high confidence
-context = Memory.get_deploy_context("auth-service", "prod")
-# failure_patterns: [%{type: :concurrent_deploy, confidence: 0.85}]
-# → auto-selects :canary
-```
-
----
-
-## FALSE Protocol
-
-Every deployment generates a structured occurrence for AI agents:
-
-```
-.nopea/
-├── occurrence.json              # Cold path: AI/external consumers
-└── occurrences/
-    ├── 01ABC123.etf             # Warm path: fast BEAM reload
-    └── ...
-```
-
-Occurrence types: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
-
-Each occurrence includes error blocks, reasoning (with memory context), history, and deploy data.
-
----
-
-## Project Structure
-
-```
-nopea/
-├── lib/nopea/
-│   ├── application.ex          # OTP supervision tree
-│   ├── deploy.ex               # Orchestration entry point
-│   ├── deploy/
-│   │   ├── spec.ex             # DeploySpec struct
-│   │   └── result.ex           # DeployResult struct
-│   ├── service_agent.ex        # Per-service queueing GenServer
-│   ├── service_agent/supervisor.ex  # DynamicSupervisor for ServiceAgents
-│   ├── progressive/            # Rollout monitor + supervisor
-│   ├── memory/                 # Ingestor + Query
-│   ├── graph/                  # In-tree knowledge graph (Node, Relationship, EWMA, …)
-│   ├── strategy.ex             # Strategy behaviour
-│   ├── strategy/
-│   │   ├── direct.ex           # Immediate apply
-│   │   ├── canary.ex           # Gradual rollout
-│   │   └── blue_green.ex       # Slot-based cutover
-│   ├── memory.ex               # Knowledge graph GenServer
-│   ├── memory/
-│   │   ├── ingestor.ex         # Deploy events → graph ops
-│   │   └── query.ex            # Context queries
-│   ├── occurrence.ex           # FALSE Protocol generator
-│   ├── mcp.ex                  # MCP server (JSON-RPC)
-│   ├── api/router.ex           # HTTP API (Plug)
-│   ├── sykli/target.ex         # SYKLI target integration
-│   ├── cli.ex                  # Escript entry point
-│   ├── k8s.ex                  # K8s API client
-│   ├── k8s/behaviour.ex        # K8s behaviour (for Mox)
-│   ├── applier.ex              # YAML parsing + server-side apply
-│   ├── drift.ex                # Three-way drift detection
-│   ├── cache.ex                # ETS deployment state
-│   ├── ulid.ex                 # Monotonic ID generator
-│   ├── events.ex               # CDEvents builder
-│   ├── events/emitter.ex       # Async CDEvents emitter
-│   ├── metrics.ex              # Telemetry metrics
-│   ├── cluster.ex              # libcluster (optional)
-│   ├── distributed_supervisor.ex  # Horde (optional)
-│   └── distributed_registry.ex    # Horde (optional)
-├── test/                       # full ExUnit suite
-├── config/
-└── mix.exs
-```
-
----
-
-## Development
-
-```bash
-mix deps.get
-mix test                     # full suite
-mix compile --warnings-as-errors
-mix format --check-formatted
-mix credo
-mix escript.build            # build CLI binary
-```
-
----
-
-## Tech Stack
-
-| Component | Purpose |
-|-----------|---------|
-| **Elixir** | OTP supervision, GenServers, ETS |
-| [k8s](https://hex.pm/packages/k8s) | Kubernetes client |
-| [yaml_elixir](https://hex.pm/packages/yaml_elixir) | YAML parsing |
-| [jason](https://hex.pm/packages/jason) | JSON encoding |
-| [plug_cowboy](https://hex.pm/packages/plug_cowboy) | HTTP API |
-| [req](https://hex.pm/packages/req) | HTTP client (CDEvents) |
-| [libcluster](https://hex.pm/packages/libcluster) | BEAM clustering (optional) |
-| [horde](https://hex.pm/packages/horde) | Distributed supervisor (optional) |
-| [mox](https://hex.pm/packages/mox) | Test mocking |
-
----
-
-## Naming
-
-**Nopea** (Finnish: "fast") — Part of the [False Systems](https://github.com/yairfalse) toolchain.
+- Kubernetes 1.22+ (server-side apply)
 
 ---
 
 ## License
 
-Apache 2.0
+Apache 2.0. Part of the [False Systems](https://github.com/false-systems) toolchain.
+
+*Nopea — Finnish: "fast".*

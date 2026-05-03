@@ -4,347 +4,231 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## WHAT IS NOPEA
+## Core definition
 
-Nopea is a deployment tool that builds a knowledge graph from every deployment. The core innovation: **memory**. Every existing tool (ArgoCD, Flux, Helm) treats each deploy as the first deploy ever. Nopea learns.
+**Nopea is a memory-backed convergence controller for system changes.**
 
-**NOT a GitOps controller.** No CRDs, no git sync, no reconciliation loops. Nopea is a CLI/API tool that deploys manifests to Kubernetes and remembers what happened.
+It executes changes (today: Kubernetes deployments), records what happened, and uses accumulated outcomes to influence future executions. Memory is not a feature on top of a deploy tool — it is the architecture.
 
 ---
 
-## BUILD AND TEST COMMANDS
+## What Nopea is NOT
+
+- **Not a simple deployment CLI.** A CLI forgets. Nopea cannot.
+- **Not GitOps.** No CRDs, no upstream sync, no reconciliation against a git ref.
+- **Not stateless.** Every execution depends on prior execution.
+- **Not bound to a specific storage backend.** Memory is an abstraction Nopea owns; how it is persisted is an implementation detail and may change.
+
+When a change pulls Nopea toward any of these, it is the wrong direction.
+
+---
+
+## The core loop
+
+```
+intent → context → plan → act → verify → learn
+```
+
+Every operation traverses every stage. Skipping a stage is a defect.
+
+| Stage | Meaning |
+|-------|---------|
+| intent | A request to change a system arrives (CLI / MCP / HTTP / Sykli node) |
+| context | Memory is consulted for prior outcomes and recurring patterns |
+| plan | A strategy is selected, informed by context |
+| act | The change is executed |
+| verify | Convergence is confirmed |
+| learn | The outcome is recorded back into memory |
+
+---
+
+## Invariants
+
+These are not aspirational. Code that violates them is broken regardless of test outcomes.
+
+1. **Every execution produces a structured occurrence.** No silent operations.
+2. **Past outcomes must influence future decisions.** Strategy selection consults memory; the consultation is not optional in code paths that need it.
+3. **No execution without context evaluation.** There is no fast path that skips the context stage.
+4. **Verification precedes progression.** A change is not "done" until convergence is confirmed.
+5. **Policy constraints override adaptive behavior.** Explicit intent (a strategy passed in) beats inferred behavior. Future policy hooks sit at the same precedence.
+6. **Per-target serialization.** Concurrent executions against the same target are forbidden — they must be queued.
+7. **Outcomes are append-only.** Memory flows forward. Past records are not edited.
+
+---
+
+## System boundaries
+
+Nopea is one organ in a larger system. Stay inside Nopea's lines.
+
+| Component | Role |
+|-----------|------|
+| **Sykli** | Defines execution graphs — what runs, when, under what conditions |
+| **Nopea** | Executes deployment-related changes with memory |
+| **Syvä** | Enforcement |
+| **Jälki** | Observation |
+| **Ahti** | Explanation |
+
+If a PR adds Sykli scheduling logic, Syvä enforcement, Jälki observation, or Ahti explanation into Nopea, it has crossed a boundary. Stop and reconsider scope.
+
+---
+
+## Design principles
+
+1. **Stateful execution.** State is the asset. Persistence is non-negotiable.
+2. **Explicit intent.** The intent struct carries everything; no hidden globals shape outcomes.
+3. **Constrained adaptation.** Memory shifts behavior only inside well-defined seams (strategy selection, risk surfacing). It does not rewrite manifests or invent operations.
+4. **Memory as first-class.** Memory APIs are public, tested, and stable — not a sidecar.
+5. **Reproducibility over cleverness.** Same intent + same memory state ⇒ same outcome. Random behavior is a defect.
+
+---
+
+## Operational reference
+
+### Build and test
 
 ```bash
-# Full verification (run after every change)
 mix format && mix compile --warnings-as-errors && mix test
-
-# Individual commands
-mix test                                    # full suite
-mix test test/nopea/deploy_test.exs         # Single file
-mix test test/nopea/deploy_test.exs:106     # Single test by line number
-mix test --exclude integration --exclude cluster  # Skip slow tests
-mix format --check-formatted
-mix credo
-mix escript.build                           # CLI binary → ./nopea
+mix test test/nopea/deploy_test.exs:106     # single test by line
+mix escript.build                            # CLI binary → ./nopea
 ```
 
-Tests exclude `:integration` and `:cluster` tags by default (configured in `test_helper.exs`).
+Tests exclude `:integration` and `:cluster` by default (see `test_helper.exs`).
 
-### Makefile shortcuts (cluster work)
+Cluster work via `Makefile`: `make build`, `make docker`, `make kind-load`, `make dev-setup`, `make eval` (full live oracle), `make oracle-local`.
 
-```bash
-make build           # mix deps.get + mix compile
-make docker          # build image; copies ../false-protocol/elixir into context
-make kind-load       # docker + kind load docker-image
-make dev-setup       # kind-create + kind-load + deploy
-make eval            # eval-deploy + oracle-run (full live eval)
-make oracle-local    # run oracle suite against localhost:4000
-```
+### Where each loop stage lives
 
----
+| Stage | Code |
+|-------|------|
+| intent | `Deploy.Spec` constructed by CLI / MCP / HTTP, all routed through `Nopea.Surface` |
+| context | `Memory.get_deploy_context/2` |
+| plan | `select_strategy/2` in `lib/nopea/deploy.ex` |
+| act | `Strategy.{Direct, Canary, BlueGreen}.execute/1` |
+| verify | `Drift.verify_manifest/3` (direct) or `Progressive.Monitor` (canary / blue-green) |
+| learn | `Memory.record_deploy/1` (async cast → memory + persistence) |
+| occur | `Occurrence.build/persist` (FALSE Protocol, every execution) |
 
-## DEPLOY PIPELINE
+`Deploy.deploy/1` is the only valid external entry point. It routes through `ServiceAgent` for per-service serialization. Never call `Deploy.run/1` directly from outside.
 
-```
-CLI/MCP/API → Surface.*() → Deploy.deploy(spec)
-    → ServiceAgent.deploy()              # queue/serialize per-service
-    → Deploy.run(spec)                   # orchestration
-    → Memory.get_deploy_context()        # graph query
-    → select_strategy()                  # direct/canary/blue_green (memory-aware)
-    ├─ :direct →
-    │   → Strategy.Direct.execute()      # K8s server-side apply
-    │   → Drift.verify_manifest()        # post-deploy 3-way diff
-    │   → Memory.record_deploy()         # graph update (EWMA, async cast)
-    └─ :canary/:blue_green →
-        → Kulta.RolloutBuilder.build()   # Rollout CRD
-        → Progressive.Monitor.start()   # polls CRD → records outcome on terminal
-    → Occurrence.build() + persist()     # FALSE Protocol
-```
-
-**Entry points**: `Deploy.deploy/1` routes through ServiceAgent if the supervisor is running; falls back to `Deploy.run/1` otherwise. Always use `deploy/1` — never call `run/1` directly from external callers.
-
-**Progressive delivery**: Canary/blue_green strategies return `status: :progressing` and start a `Progressive.Monitor` GenServer. The Monitor polls the Kulta Rollout CRD and records the final outcome. Direct deploys return `:completed` or `:failed` immediately.
-
----
-
-## SURFACE — UNIFIED INTERFACE LAYER
-
-`Nopea.Surface` is the facade backing CLI, MCP, and HTTP. All user-facing interfaces delegate here.
+### Module map
 
 ```
-CLI (cli.ex) ──→ Surface.*() ──→ Memory / Cache / ServiceAgent / Progressive.Monitor
-MCP (mcp.ex) ──→ Surface.*()
-HTTP (router.ex) → Surface.*()
+lib/nopea/
+├── deploy.ex                    # Loop orchestrator (entry: Deploy.deploy/1)
+├── deploy/{spec,result}.ex
+├── strategy.ex + strategy/{direct,canary,blue_green}.ex
+├── service_agent.ex + service_agent/supervisor.ex   # Per-target queue
+├── progressive/                 # Rollout monitor (canary / blue-green)
+├── memory.ex + memory/          # Memory facade, ingestor, query
+├── graph/                       # Memory internals — private to memory.ex
+├── surface.ex                   # Unified facade (CLI / MCP / HTTP all route here)
+├── api/{router,auth_plug}.ex    # HTTP (Plug/Cowboy) + x-api-key auth
+├── mcp.ex                       # MCP JSON-RPC over stdin/stdout
+├── cli.ex                       # Escript entry
+├── k8s.ex + k8s/behaviour.ex    # K8s client (Mox-injected in tests)
+├── applier.ex + drift.ex        # Server-side apply + 3-way drift verify
+├── kulta/rollout_builder.ex     # Rollout CRDs for progressive
+├── domain/resource_key.ex       # Canonical Kind/Namespace/Name struct
+├── occurrence.ex                # FALSE Protocol generator
+├── events/emitter.ex            # CDEvents (optional)
+├── cluster.ex + distributed_*   # libcluster + Horde (optional)
+└── application.ex               # OTP supervision tree
 ```
 
-Key design: Surface handles graceful degradation when optional subsystems aren't running (e.g., returns `{:error, :unavailable}` if Cache is down rather than crashing).
+External callers go through the `Memory` API. Anything under `memory/` and `graph/` is implementation detail.
 
-**API auth**: `Nopea.API.AuthPlug` enforces an `x-api-key` header against `Application.get_env(:nopea, :api_key)`. If `:api_key` is `nil` (dev mode), all requests pass. `/health` and `/ready` are always allowed.
+### Configuration
 
-**Resource identity**: `Nopea.Domain.ResourceKey` (`Kind/Namespace/Name`) is the canonical struct passed between Applier, Cache, Drift, and Events — prefer it over raw strings.
-
----
-
-## OTP SUPERVISION TREE
-
-```
-Nopea.Application
-├── Nopea.ULID                       # Monotonic ID generator
-├── TelemetryMetricsPrometheus       # Metrics (optional)
-├── Nopea.Events.Emitter             # CDEvents HTTP emitter (optional)
-├── Nopea.Cache                      # ETS tables for deployment state
-├── Nopea.Memory                     # GenServer wrapping knowledge graph
-├── Nopea.Cluster                    # libcluster (optional, cluster mode)
-├── Nopea.Registry / DistributedRegistry  # Process registry
-├── Nopea.ServiceAgent.Supervisor    # DynamicSupervisor for per-service agents
-├── Nopea.Progressive.Supervisor     # DynamicSupervisor for rollout monitors
-└── Nopea.API.Router                 # Plug/Cowboy HTTP (optional)
-```
-
-### Configuration Feature Flags
-
-Most children are optional, controlled by `Application.get_env(:nopea, key)`. In `:prod`, most flags are populated from `NOPEA_*` env vars by `config/runtime.exs` (e.g., `NOPEA_ENABLE_ROUTER`, `NOPEA_API_KEY`, `NOPEA_API_PORT`, `NOPEA_CLUSTER_*`).
+Most subsystems are feature-flagged via `Application.get_env(:nopea, …)`; in `:prod` flags are populated from `NOPEA_*` env vars by `config/runtime.exs`.
 
 | Key | Default | Controls |
 |-----|---------|----------|
-| `:enable_metrics` | `true` | TelemetryMetricsPrometheus |
-| `:enable_cache` | `true` | Nopea.Cache (ETS) |
-| `:enable_memory` | `true` | Nopea.Memory (knowledge graph) |
-| `:enable_deploy_supervisor` | `true` | Registry + ServiceAgent.Supervisor + Progressive.Supervisor |
-| `:enable_router` | `false` | Nopea.API.Router (HTTP) |
-| `:cluster_enabled` | `false` | Cluster + DistributedRegistry |
-| `:cdevents_endpoint` | `nil` | Events.Emitter (started only if set) |
-| `:canary_threshold` | `0.15` | Failure confidence for auto-canary |
-| `:cluster_strategy` | `:kubernetes_dns` | libcluster strategy (`:kubernetes_dns`, `:gossip`, `:epmd`) |
-| `:cluster_service` | `"nopea-headless"` | K8s headless service for DNS discovery |
-| `:cluster_app_name` | `"nopea"` | Erlang application name for DNS discovery |
-| `:pod_namespace` | `"default"` | Kubernetes namespace for DNS discovery |
-| `:cluster_polling_interval` | `5_000` | DNS polling interval in ms |
-| `:cluster_gossip_port` | `45_892` | UDP port for gossip strategy |
-| `:cluster_gossip_secret` | `nil` | Shared secret for gossip authentication |
-| `:cluster_hosts` | `[]` | Node list for EPMD strategy (atom list) |
+| `:enable_metrics` | `true` | Telemetry / Prometheus |
+| `:enable_cache` | `true` | ETS deployment-state cache |
+| `:enable_memory` | `true` | Memory subsystem |
+| `:enable_deploy_supervisor` | `true` | Registry + ServiceAgent + Progressive supervisors |
+| `:enable_router` | `false` | HTTP API |
+| `:cluster_enabled` | `false` | libcluster + Horde |
+| `:cdevents_endpoint` | `nil` | Events emitter (started only if set) |
+| `:canary_threshold` | `0.15` | Adaptive-canary trigger |
+| `:api_key` | `nil` | HTTP `x-api-key` requirement (`nil` = open / dev mode) |
 
----
-
-## STRATEGY AUTO-SELECTION
+### Strategy selection
 
 ```elixir
-# Explicit strategy always wins
-defp select_strategy(%Spec{strategy: strategy}, _context)
-     when strategy in [:direct, :canary, :blue_green], do: strategy
+# Explicit intent wins (invariant 5)
+defp select_strategy(%Spec{strategy: s}, _) when s in [:direct, :canary, :blue_green], do: s
 
-# Memory-based: known service with high failure confidence → canary
-defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: patterns})
-     when is_list(patterns) do
+# Otherwise, memory-driven
+defp select_strategy(%Spec{strategy: nil}, %{known: true, failure_patterns: ps}) when is_list(ps) do
   threshold = Application.get_env(:nopea, :canary_threshold, 0.15)
-  if Enum.any?(patterns, fn p -> p.confidence > threshold end), do: :canary, else: :direct
+  if Enum.any?(ps, &(&1.confidence > threshold)), do: :canary, else: :direct
 end
 
-# Default: direct
-defp select_strategy(%Spec{strategy: nil}, _context), do: :direct
+defp select_strategy(_, _), do: :direct
 ```
 
-Canary/blue_green strategies use `Kulta.RolloutBuilder` to create Rollout CRDs. If no Deployment manifest is found in the spec, the strategy fails with `:no_deployment_found`.
+Canary and blue-green return `:progressing`; a `Progressive.Monitor` GenServer (per rollout) polls the Kulta Rollout CRD (10s interval, 1h max) and records the terminal outcome. Manual control: `Surface.promote/1`, `Surface.rollback/1`. Monitors register as `{:rollout, deploy_id}` in `Nopea.Registry`.
 
----
+### K8s mock (Mox)
 
-## SERVICE AGENT
+`Nopea.K8s` implements `Nopea.K8s.Behaviour`. Tests inject `Nopea.K8sMock` via `:k8s_module` config (set in `test_helper.exs`).
 
-Per-service GenServer that queues and serializes deploys:
-
-- **Queue limit**: 10 — rejects excess with `{:error, :queue_full}`
-- **Crash cooldown**: 2s delay before dequeuing after worker crash
-- **Idle timeout**: 30 min — agent shuts down if no deploys
-- **Lookup**: `ServiceAgent.status(service)` returns `{:ok, %{status: :idle | :deploying, ...}}`
-- **Health**: `ServiceAgent.health()` queries all active agents
-
----
-
-## MEMORY SYSTEM
-
-Knowledge graph stored in `Nopea.Memory` GenServer state, persisted to `.nopea/graph.etf`.
-
-The graph implementation lives in `lib/nopea/graph/` (`Node`, `Relationship`, `Identity`, `EWMA`, `NodeKind`, `RelationType`) — it is **in-tree**, not an external dependency.
-
-**Graph nodes**: services, namespaces, errors (kinds: `:concept`, `:error`)
-**Graph relationships**: `:deployed_to`, `:breaks`, `:deployed_together`
-**EWMA decay**: Weights decay hourly (factor 0.98) so recent deploys matter more
-
-Key API:
-- `Memory.get_deploy_context(service, namespace)` → failure patterns, recommendations
-- `Memory.record_deploy(result)` → ingest into graph (**async cast**)
-- `Memory.node_count()` / `Memory.relationship_count()` → graph stats (**sync call**)
-
-### Persistence
-
-Graph persists to `.nopea/graph.etf` as versioned binary (`<<1, rest::binary>>`).
-Restore order on startup: ETS snapshot → disk → fresh `Graph.new()`.
-Written on every `record_deploy`, hourly decay, and `terminate/2`.
-
----
-
-## K8S MOCK PATTERN
-
-`Nopea.K8s` implements `Nopea.K8s.Behaviour`. Mox injects `Nopea.K8sMock` in tests via config:
-
-```elixir
-# test_helper.exs sets:
-Application.put_env(:nopea, :k8s_module, Nopea.K8sMock)
-
-# Production code resolves at runtime:
-defp k8s_module, do: Application.get_env(:nopea, :k8s_module, Nopea.K8s)
-```
-
-### Test Setup Patterns
-
-**Unit tests** (no spawned processes):
+Unit tests:
 ```elixir
 setup :verify_on_exit!
 setup do
   Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
-  Mox.stub(Nopea.K8sMock, :get_resource, fn _, _, _, _ -> {:error, :not_found} end)
   :ok
 end
 ```
 
-**Integration tests** (ServiceAgent, spawned workers):
+Integration tests (spawned processes need global mocks):
 ```elixir
-setup :set_mox_global          # MUST come before other setup — allows spawned processes to use mocks
+setup :set_mox_global    # MUST come before other setup
 setup :verify_on_exit!
-setup do
-  Mox.stub_with(Nopea.K8sMock, Nopea.K8s)
-  start_supervised!({Registry, keys: :unique, name: Nopea.Registry})
-  start_supervised!(Nopea.ServiceAgent.Supervisor)
-  start_supervised!({Nopea.Memory, []})
-  start_supervised!(Nopea.Cache)
-  :ok
-end
 ```
 
-### Sync After Async Casts
+Factories: `Nopea.Test.Factory.{sample_deployment_manifest, sample_service_manifest, sample_configmap_manifest}`.
 
-`Memory.record_deploy/1` is a `cast` — don't use `Process.sleep` to wait for it. Use any `GenServer.call` to the same process as a mailbox flush:
+### Async-cast sync
+
+`Memory.record_deploy/1` is a `cast`. Don't `Process.sleep`. Flush the mailbox with any sync `call`:
 
 ```elixir
-# BEAM mailbox FIFO ordering guarantees all prior casts complete before this call returns
-_ = Nopea.Memory.node_count()
+_ = Nopea.Memory.node_count()             # mailbox barrier
 ctx = Nopea.Memory.get_deploy_context("svc", "ns")
 ```
 
-### Test Factories
+BEAM mailbox FIFO ordering guarantees casts before this call have been processed.
 
-Available in `test/support/factory.ex`:
-- `Nopea.Test.Factory.sample_deployment_manifest(name, namespace)`
-- `Nopea.Test.Factory.sample_service_manifest(name)`
-- `Nopea.Test.Factory.sample_configmap_manifest(name, namespace, data)`
+### Oracle (eval)
 
----
+`eval/oracle/` is a **standalone Mix project** that imports nothing from Nopea internals. It exercises a live instance through public interfaces only (HTTP + MCP). Oracle failures are architectural signals, not bug reports. Run `make oracle-local` (against `localhost:4000`) or `make eval` (full kind deploy + oracle).
 
-## ELIXIR PATTERNS
+### Pre-commit and CI
 
-### Error Handling
-```elixir
-# {:ok, _} / {:error, _} tuples — no bare raise
-with {:ok, conn} <- K8s.conn(),
-     {:ok, applied} <- Applier.apply_manifests(manifests, conn, ns) do
-  {:ok, applied}
-end
-```
-
-### Logging
-```elixir
-require Logger
-Logger.info("Deploy completed", service: service, deploy_id: deploy_id, duration_ms: duration_ms)
-# Use structured metadata — keys configured in config/config.exs
-# No IO.puts or IO.inspect in production code
-```
-
-### Atoms not Strings
-```elixir
-# Status: :completed, :failed — not "completed", "failed"
-# Strategy: :direct, :canary, :blue_green — not strings
-```
-
----
-
-## FALSE PROTOCOL
-
-Occurrences are structured events generated after every deployment.
-
-**Types**: `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`
-**Storage**: `.nopea/occurrence.json` (cold) + `.nopea/occurrences/*.etf` (warm)
-
----
-
-## PROGRESSIVE DELIVERY
-
-Canary and blue_green strategies create Kulta Rollout CRDs and return `:progressing`. A `Progressive.Monitor` GenServer per rollout polls the CRD status.
-
-- **Phases**: `:progressing` → `:promoted` / `:completed` / `:degraded` / `:paused` / `:failed`
-- **Terminal**: `:completed`, `:promoted`, `:failed` — Monitor stops and records outcome
-- **Poll interval**: 10s, **Max duration**: 1 hour (timeout → `:failed`)
-- **Manual control**: `Surface.promote(deploy_id)` / `Surface.rollback(deploy_id)`
-- **Registry**: Monitors register as `{:rollout, deploy_id}` in `Nopea.Registry`
-
----
-
-## MCP SERVER
-
-JSON-RPC 2.0 over stdin/stdout. Tools: `nopea_deploy`, `nopea_context`, `nopea_history`, `nopea_health`, `nopea_explain`, `nopea_services`, `nopea_promote`, `nopea_rollback`.
-
----
-
-## ORACLE — GROUND-TRUTH EVAL SUITE
-
-`eval/oracle/` is a **standalone Mix project** that imports nothing from Nopea internals. It tests a live Nopea instance through public interfaces only (HTTP API + MCP). Oracle failures are treated as architectural signals, not bug reports.
-
-**Run modes:**
-- Against `localhost:4000`: `make oracle-local` (or `cd eval/oracle && mix test --exclude mcp`)
-- Against kind-deployed Nopea: `make oracle-run` (builds image, loads to kind, runs Job, waits)
-- Full eval (deploy + run): `make eval`
-
-**Configured via env:** `NOPEA_URL`, `NOPEA_API_KEY`, `NOPEA_MCP_BINARY`, `NOPEA_SETTLE_MS`.
-
-Test files are numbered (`case_001_health_test.exs` … `case_091_observability_test.exs`) covering health, auth, deploy errors/correctness, memory, progressive, resilience, MCP, and observability.
-
----
-
-## DEPENDENCIES
-
-| Package | Purpose |
-|---------|---------|
-| `false_protocol` | FALSE Protocol occurrence generation (path dep `../false-protocol/elixir`; Docker build copies it into context) |
-| `k8s` | Kubernetes client |
-| `yaml_elixir` | YAML parsing |
-| `jason` | JSON |
-| `plug_cowboy` | HTTP server |
-| `req` | HTTP client (CDEvents) |
-| `libcluster` | BEAM clustering (optional) |
-| `horde` | Distributed supervisor/registry (optional) |
-| `telemetry` + `prometheus_core` | Observability |
-| `mox` | Test mocking (test only) |
-| `credo` | Linting (dev/test only) |
-
----
-
-## ENFORCED CONVENTIONS (pre-commit)
-
-`scripts/setup-hooks.sh` installs `.git/hooks/pre-commit` that **rejects** commits with:
-- `raise "..."` in `lib/` (use `{:error, reason}` tuples)
-- `IO.puts` / `IO.inspect` in `lib/` (use `Logger`)
-- `TODO` / `FIXME` in `lib/` (complete or remove)
+`scripts/setup-hooks.sh` installs a hook that **rejects** commits with these in `lib/`:
+- `raise "..."` (use `{:error, reason}`)
+- `IO.puts` / `IO.inspect` (use `Logger`)
+- `TODO` / `FIXME`
 
 The hook also runs `mix format --check-formatted`, `mix credo --strict`, and `mix test`. CI (`.github/workflows/ci.yml`) runs the same checks.
 
+### Surface and identity
+
+- `Nopea.Surface` is the facade behind CLI, MCP, and HTTP. It degrades gracefully when optional subsystems are down (e.g., returns `{:error, :unavailable}` rather than crashing).
+- HTTP API gated by `Nopea.API.AuthPlug` (`x-api-key` against `:api_key`); `nil` key = dev mode. `/health` and `/ready` always pass.
+- `Nopea.Domain.ResourceKey` (`Kind/Namespace/Name`) is the canonical struct between Applier, Cache, Drift, and Events. Prefer it over raw strings.
+
 ---
 
-## AGENT INSTRUCTIONS
+## Working in this repo
 
-1. **Read first** — understand the module before changing it
-2. **TDD always** — write failing test, implement, refactor
-3. **No stubs** — complete implementations only
-4. **Typespecs required** — all public functions
-5. **Run checks** — `mix format && mix compile --warnings-as-errors && mix test`
-6. **No IO.puts** — use `require Logger` with structured metadata
-7. **No bare raise** — use `{:error, reason}` tuples
-8. **No Process.sleep in tests** — use GenServer.call barriers for async cast sync
+1. Read first. Locate the loop stage you're touching.
+2. TDD. Write the failing test that captures the invariant you're enforcing.
+3. No stubs. No partial implementations.
+4. Typespecs on all public functions.
+5. After every change: `mix format && mix compile --warnings-as-errors && mix test`.
+6. No `IO.puts`, no bare `raise`, no `Process.sleep` in tests (use `GenServer.call` barriers).
+7. If a change blurs a system boundary (Sykli / Syvä / Jälki / Ahti), stop and reconsider scope.
