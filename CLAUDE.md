@@ -96,11 +96,22 @@ Tests exclude `:integration` and `:cluster` by default (see `test_helper.exs`).
 
 Cluster work via `Makefile`: `make build`, `make docker`, `make kind-load`, `make dev-setup`, `make eval` (full live oracle), `make oracle-local`.
 
+### Run locally
+
+```bash
+make run                           # iex -S mix
+make run-no-controller             # iex -S mix without the K8s controller
+NOPEA_ENABLE_ROUTER=true iex -S mix  # HTTP API on localhost:4000
+NOPEA_API_KEY=secret NOPEA_ENABLE_ROUTER=true iex -S mix  # with auth
+```
+
+`mix escript.build` produces the `./nopea` CLI binary; `make dev-setup` is the full kind-cluster path. For day-to-day development inside iex, `make run` is the entry point.
+
 ### Where each loop stage lives
 
 | Stage | Code |
 |-------|------|
-| intent | `Deploy.Spec` constructed by CLI / MCP / HTTP, all routed through `Nopea.Surface` |
+| intent | `Deploy.Spec` (`lib/nopea/deploy/spec.ex`: `service`, `namespace`, `manifests`, `strategy`, `manifest_path`, `timeout_ms`) constructed by CLI / MCP / HTTP, all routed through `Nopea.Surface` |
 | context | `Memory.get_deploy_context/2` |
 | plan | `select_strategy/2` in `lib/nopea/deploy.ex` |
 | act | `Strategy.{Direct, Canary, BlueGreen}.execute/1` |
@@ -113,11 +124,14 @@ Every traversal of the loop also produces a FALSE Protocol occurrence (`Occurren
 
 ### Per-target queueing
 
-`ServiceAgent` queues deploys per service. When a service's queue is saturated, `Deploy.deploy/1` returns `{:error, :queue_full}` rather than dropping or blocking. The CLI, MCP, and HTTP surfaces all surface this error verbatim.
+Today's "target" is a service — `ServiceAgent` queues deploys per service. When a service's queue is saturated, `Deploy.deploy/1` returns `{:error, :queue_full}` rather than dropping or blocking. The CLI, MCP, and HTTP surfaces all surface this error verbatim. Invariant 6 stays abstract ("per-target") because the target type may broaden as Nopea executes non-deployment changes.
 
-### Persistence
+### Persistence and occurrences
 
-Memory is persisted to `.nopea/graph.etf`. Restore order on startup: ETS snapshot → disk → fresh state. Wiping the file resets memory.
+- **Memory**: persisted to `.nopea/graph.etf`. Restore order on startup: ETS snapshot → disk → fresh state. Wiping the file resets memory.
+- **FALSE Protocol occurrences**: every loop traversal writes one. Types are `deploy.run.completed`, `deploy.run.failed`, `deploy.run.rolledback`. Two locations:
+  - cold path — `.nopea/occurrence.json` (latest, AI/external consumers)
+  - warm path — `.nopea/occurrences/<ulid>.etf` (append-only, fast BEAM reload)
 
 ### Module map
 
@@ -136,10 +150,10 @@ lib/nopea/
 ├── cli.ex                       # Escript entry
 ├── k8s.ex + k8s/behaviour.ex    # K8s client (Mox-injected in tests)
 ├── applier.ex + drift.ex        # Server-side apply + 3-way drift verify
-├── kulta/rollout_builder.ex     # Rollout CRDs for progressive
+├── kulta/rollout_builder.ex     # Builds Kulta Rollout CRDs (kulta.io/v1alpha1); Kulta handles the actual traffic shifting + rollback
 ├── domain/resource_key.ex       # Canonical Kind/Namespace/Name struct
 ├── occurrence.ex                # FALSE Protocol generator
-├── events/emitter.ex            # CDEvents (optional)
+├── events/emitter.ex            # CDEvents v0.5.0 emitter (CloudEvents-compatible, HTTP, optional)
 ├── cluster.ex + distributed_*   # libcluster + Horde (optional)
 └── application.ex               # OTP supervision tree
 ```
@@ -176,6 +190,10 @@ end
 
 defp select_strategy(_, _), do: :direct
 ```
+
+A 4th clause in `lib/nopea/deploy.ex` handles unrecognized strategy values (logs and falls through to `:direct`).
+
+`Memory.get_deploy_context/2` returns `%{known: boolean, failure_patterns: [%{type, confidence, count, …}], dependencies: [...], recommendations: [...]}`. The shape is the contract between memory and strategy selection — extending pattern handling means starting at `lib/nopea/memory/query.ex`.
 
 Canary and blue-green return `:progressing`; a `Progressive.Monitor` GenServer (per rollout) polls the Kulta Rollout CRD (10s interval, 1h max) and records the terminal outcome. Manual control: `Surface.promote/1`, `Surface.rollback/1`. Monitors register as `{:rollout, deploy_id}` in `Nopea.Registry`.
 
@@ -235,7 +253,7 @@ The hook also runs `mix format --check-formatted`, `mix credo --strict`, and `mi
 ## Working in this repo
 
 1. Read first. Locate the loop stage you're touching.
-2. TDD. Write the failing test that captures the invariant you're enforcing.
+2. TDD when behavior changes. Write the failing test that captures the invariant or contract you're enforcing. Typo / doc / cosmetic changes don't require a new test.
 3. No stubs. No partial implementations.
 4. Typespecs on all public functions.
 5. After every change: `mix format && mix compile --warnings-as-errors && mix test`.
