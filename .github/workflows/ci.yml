@@ -12,7 +12,7 @@ permissions:
 jobs:
   ci:
     name: CI (Sykli)
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +42,7 @@ jobs:
 
   status:
     name: CI Status
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     needs: [ci]
     if: always()
     steps:
