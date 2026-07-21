@@ -12,7 +12,7 @@ permissions:
 jobs:
   ci:
     name: CI (Sykli)
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +31,9 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
+      - uses: azure/setup-helm@v4
+        with:
+          version: "v3.19.0"   # newest v3: knows platformHooks; v4 forces plugin verification
       - name: Install helm-unittest
         run: helm plugin install https://github.com/helm-unittest/helm-unittest.git
 
@@ -42,7 +45,7 @@ jobs:
 
   status:
     name: CI Status
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     needs: [ci]
     if: always()
     steps:
