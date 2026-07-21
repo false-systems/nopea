@@ -32,8 +32,6 @@ jobs:
           restore-keys: ${{ runner.os }}-mix-
 
       - uses: azure/setup-helm@v4
-        with:
-          version: "v3.16.0"
       - name: Install helm-unittest
         run: helm plugin install https://github.com/helm-unittest/helm-unittest.git
 
