@@ -12,7 +12,14 @@ permissions:
 jobs:
   ci:
     name: CI (Sykli)
-    runs-on: arc-arm64
+    # Hosted, not self-hosted (false-infra#207). Nothing here needs a kernel or
+    # a machine we own — it is Elixir, helm and sykli — and a public repository
+    # on an org runner lets a fork pull request run code inside the false-infra
+    # cluster. Hosted minutes are unlimited and free for public repositories, so
+    # this costs nothing; the `azure/setup-helm` pin below is what the ARC image
+    # was missing and is kept, because it pins the version helm-unittest needs
+    # rather than taking whatever the image ships.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +52,7 @@ jobs:
 
   status:
     name: CI Status
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
     needs: [ci]
     if: always()
     steps:
